@@ -226,3 +226,4 @@ The project will be considered successful if it achieves:
 # Expected Outcome
 
 OfflineMesh aims to provide a reliable, secure, and hybrid communication platform that ensures users remain connected even in environments where traditional internet-based messaging services fail.
+## Authentication Module
