@@ -1,4 +1,4 @@
-# OfflineMesh
+# MeshLink
 
 > A secure hybrid communication platform that enables messaging, file sharing, and real-time communication over the Internet, Local Area Networks (LAN), and nearby peer-to-peer connections without relying solely on centralized infrastructure.
 
