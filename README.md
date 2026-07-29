@@ -223,7 +223,114 @@ The project will be considered successful if it achieves:
 
 ---
 
+# Development Tools
+
+The following tools are required to build, run, and develop the OfflineMesh application locally.
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Java | 21 | Backend development |
+| Spring Boot | 4.1.0 | REST API framework |
+| Maven | 3.9.16 | Dependency management & build tool |
+| Docker | 29.6.2 | Containerization |
+| Docker Compose | v5.3.1 | Multi-container orchestration |
+| Flutter SDK | Latest Stable | Mobile application development |
+| Git | Latest | Version control |
+| GitHub | - | Source code hosting |
+| Visual Studio Code | Latest | Code editor |
+| H2 Database | Latest | Development database |
+| PostgreSQL | 17+ (Planned) | Production database |
+| Postman | Latest | API testing |
+
+---
+
+# Development Environment
+
+- **Operating System:** Pop!_OS / Ubuntu Linux
+- **Backend IDE:** Visual Studio Code
+- **Frontend IDE:** Visual Studio Code
+- **Java Version:** OpenJDK 21
+- **Container Platform:** Docker Desktop / Docker Engine
+- **Version Control:** Git & GitHub
+
+---
+
+# Quick Start – Local Development
+
+## Prerequisites
+
+Ensure the following software is installed:
+
+- Java 21
+- Maven
+- Docker
+- Docker Compose
+- Git
+- Flutter SDK
+
+## Clone the Repository
+
+```bash
+git clone https://github.com/<your-username>/OfflineMesh_dev.git
+cd OfflineMesh_dev
+```
+
+## Build the Backend
+
+```bash
+cd backend
+./mvnw clean package -DskipTests
+```
+
+## Run with Docker Compose
+
+```bash
+cd ..
+docker compose up --build
+```
+
+## Access the Backend
+
+Open your browser and navigate to:
+
+```
+http://localhost:8080/api/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "UP",
+  "service": "OfflineMesh Backend"
+}
+```
+
+## Stop the Application
+
+```bash
+docker compose down
+```
+
+---
+
+## Docker Commands
+
+Build the Docker image manually:
+
+```bash
+cd backend
+docker build -t offlinemesh-backend .
+```
+
+Run the container:
+
+```bash
+docker run -p 8080:8080 offlinemesh-backend
+```
+
 # Expected Outcome
 
 OfflineMesh aims to provide a reliable, secure, and hybrid communication platform that ensures users remain connected even in environments where traditional internet-based messaging services fail.
-## Authentication Module
+
+
