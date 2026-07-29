@@ -181,6 +181,66 @@ The project will be considered successful if it achieves:
 
 ---
 
+# Branching Strategy
+
+This project follows a feature-branch workflow to keep development organized and maintain a stable main branch.
+
+## Branches
+
+### main
+- Contains stable and production-ready code.
+- Only tested and reviewed code is merged into this branch.
+
+### feature/*
+- Used for developing new features or enhancements.
+- Each feature is implemented in its own branch before being merged into `main`.
+
+Examples:
+- `feature/backend-setup`
+- `feature/flutter-ui`
+- `feature/docker-support`
+- `feature/authentication`
+- `feature/bluetooth-messaging`
+
+## Development Workflow
+
+1. Create a new feature branch from `main`.
+
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/docker-support
+```
+
+2. Develop and test the feature locally.
+
+3. Commit changes with meaningful commit messages.
+
+```bash
+git add .
+git commit -m "Add Docker support for Spring Boot backend"
+```
+
+4. Push the feature branch to GitHub.
+
+```bash
+git push -u origin feature/docker-support
+```
+
+5. Create a Pull Request (PR) on GitHub.
+
+6. Review and merge the feature branch into `main`.
+
+7. Delete the feature branch after a successful merge.
+
+## Benefits
+
+- Keeps the `main` branch stable.
+- Enables parallel development of multiple features.
+- Simplifies code reviews using Pull Requests.
+- Makes it easier to track feature-specific changes.
+- Reduces merge conflicts during development.
+
 # Technology Stack
 
 ## Frontend
