@@ -1,0 +1,7 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: offlinemesh-backend
+    ports:
+      - "8080:8080"
