@@ -1,0 +1,3 @@
+-- Initial Flyway migration script
+-- The database and infrastructure foundation is set up.
+-- Business entities (Users, Conversations, Messages, etc.) will be added in subsequent migrations.
