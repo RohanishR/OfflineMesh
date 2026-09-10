@@ -389,6 +389,48 @@ Run the container:
 docker run -p 8080:8080 offlinemesh-backend
 ```
 
+## Software Design
+
+OfflineMesh follows a layered and modular architecture designed to support communication across multiple transport technologies. The system uses a Flutter-based Android client, a Spring Boot backend, and PostgreSQL for persistent data storage, with REST APIs and STOMP/WebSockets for communication.
+
+A transport abstraction and routing layer separates the messaging system from the underlying communication technology, allowing OfflineMesh to support Internet, Wi-Fi LAN, Bluetooth, and BLE Mesh communication while keeping the architecture extensible.
+
+### High-Level Architecture
+
+![OfflineMesh Architecture](docs/design/architecture.png)
+
+[View Editable Draw.io Architecture](docs/design/architecture.drawio)
+
+### Design Documentation
+
+See the complete software design documentation:
+
+[Software Design Documentation](docs/design/README.md)
+
+### UI Design
+
+The mobile interface is designed using Flutter with a focus on simplicity, clear navigation, and minimal user interaction.
+
+The main screens include:
+
+- Login
+- Registration
+- Home
+- Friends
+- Chat
+- Profile / QR Code
+
+UI screenshots are available in [`docs/design/ui/`](docs/design/ui/).
+
+### Key Design Decisions
+
+- **Flutter Android Client** — Provides a modern and maintainable mobile interface.
+- **Spring Boot Backend** — Handles authentication, users, friendships, messaging, routing, and file metadata.
+- **Transport Abstraction** — Separates communication logic from specific networking technologies.
+- **Automatic Transport Selection** — Allows the system to select an appropriate available transport.
+- **OfflineMesh ID & QR Connection** — Allows users to connect directly without depending on phone numbers.
+- **Modular Architecture** — Allows Internet, Wi-Fi LAN, Bluetooth, and BLE Mesh functionality to be developed independently.
+
 # Expected Outcome
 
 OfflineMesh aims to provide a reliable, secure, and hybrid communication platform that ensures users remain connected even in environments where traditional internet-based messaging services fail.
