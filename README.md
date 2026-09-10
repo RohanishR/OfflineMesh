@@ -397,15 +397,15 @@ A transport abstraction and routing layer separates the messaging system from th
 
 ### High-Level Architecture
 
-![OfflineMesh Architecture](docs/design/architecture.png)
+![OfflineMesh Architecture](docs/diagrams/architecture.png)
 
-[View Editable Draw.io Architecture](docs/design/architecture.drawio)
+[View Editable Draw.io Architecture](docs/diagrams/architecture.drawio)
 
 ### Design Documentation
 
 See the complete software design documentation:
 
-[Software Design Documentation](docs/design/README.md)
+[Software Design Documentation](README.md)
 
 ### UI Design
 
@@ -420,7 +420,7 @@ The main screens include:
 - Chat
 - Profile / QR Code
 
-UI screenshots are available in [`docs/design/ui/`](docs/design/ui/).
+UI screenshots are available in [`docs/design/ui/`](docs/screenshots/).
 
 ### Key Design Decisions
 
