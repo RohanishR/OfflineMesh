@@ -1,0 +1,78 @@
+<mxfile host="app.diagrams.net" modified="2026-09-10T00:00:00.000Z" agent="Claude" version="24.0.0" type="device">
+  <diagram name="OfflineMesh Architecture" id="offlinemesh-arch">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===================== LAYER 1: PRESENTATION ===================== -->
+        <mxCell id="layer1" value="PRESENTATION LAYER" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="720" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="flutter" value="Flutter Android Application&#10;UI • Authentication • Friends • Chat • Files • Calls" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#bac8d3;strokeColor=#23445d;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="280" y="68" width="240" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== LAYER 2: APPLICATION ===================== -->
+        <mxCell id="layer2" value="APPLICATION LAYER — Spring Boot Backend" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="180" width="720" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="auth" value="Auth Service" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#e6f7f0;strokeColor=#0f6e56;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="212" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="users" value="Users &amp; Friends" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#e6f7f0;strokeColor=#0f6e56;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="230" y="212" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="messaging" value="Messaging Service" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#e6f7f0;strokeColor=#0f6e56;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="400" y="212" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="files" value="File Management" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#e6f7f0;strokeColor=#0f6e56;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="570" y="212" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="routing" value="Routing Service" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="310" y="300" width="200" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== LAYER 3: TRANSPORT ABSTRACTION ===================== -->
+        <mxCell id="layer3" value="TRANSPORT ABSTRACTION — CommunicationTransport" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#fce4d6;strokeColor=#d79b00;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="450" width="720" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="internet" value="Internet Transport" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fbe0d6;strokeColor=#993c1d;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="500" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="wifi" value="Wi-Fi LAN Transport" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fbe0d6;strokeColor=#993c1d;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="230" y="500" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="bluetooth" value="Bluetooth Transport" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fbe0d6;strokeColor=#993c1d;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="400" y="500" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="blemesh" value="BLE Mesh Transport" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fbe0d6;strokeColor=#993c1d;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="570" y="500" width="150" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== LAYER 4: DATA ===================== -->
+        <mxCell id="layer4" value="DATA LAYER" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="660" width="720" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="postgres" value="PostgreSQL&#10;Users • Friendships • Messages • Conversations • Routes • File Metadata" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ded1e6;strokeColor=#5c3566;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="240" y="688" width="320" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== EDGES ===================== -->
+        <mxCell id="e1" value="REST / STOMP WebSocket" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;elbow=vertical;fontSize=11;" edge="1" parent="1" source="flutter" target="layer2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="messaging" target="routing">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="Transport Selection / Routing" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;elbow=vertical;fontSize=11;" edge="1" parent="1" source="routing" target="layer3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;elbow=vertical;fontSize=11;" edge="1" parent="1" source="layer3" target="postgres">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
