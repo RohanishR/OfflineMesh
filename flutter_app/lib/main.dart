@@ -1,54 +1,52 @@
 import 'package:flutter/material.dart';
+import 'core/config/app_config.dart';
+import 'core/network/auth_service.dart';
+import 'features/files/services/file_service.dart';
+import 'features/auth/screens/splash_screen.dart';
 
 void main() {
-  runApp(const MyApp());
+  // Services are initialised here so the backend URL is defined in one place.
+  // FileService requires a JWT token; in a real flow the token comes from AuthService
+  // after the user logs in. For now we pass an empty token so the app starts cleanly.
+  final authService = AuthService(baseUrl: AppConfig.backendBaseUrl);
+  final fileService = FileService(
+    baseUrl: AppConfig.backendBaseUrl,
+    jwtToken: authService.jwtToken ?? '',
+  );
+
+  runApp(MyApp(authService: authService, fileService: fileService));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final AuthService authService;
+  final FileService fileService; // Keeping this for now if it's injected elsewhere, though HomeScreen instantiates its own. Let's clean it up to just take authService and let HomeScreen handle the rest, or just keep passing it if needed. Actually we only need AuthService at the root.
 
-  // This widget is the root of your application.
+  const MyApp({super.key, required this.authService, required this.fileService});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'OfflineMesh',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: SplashScreen(authService: authService),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
+  const MyHomePage({
+    super.key,
+    required this.title,
+    required this.authService,
+    required this.fileService,
+  });
 
   final String title;
+  final AuthService authService;
+  final FileService fileService;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();

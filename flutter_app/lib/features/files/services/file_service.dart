@@ -1,17 +1,21 @@
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 import '../models/file_metadata.dart';
 import 'file_transfer_transport.dart';
 import 'internet_file_transfer_transport.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
+import '../../../core/security/e2e_encryption_service.dart';
+import '../../../core/security/encrypted_envelope.dart';
 
 class FileService {
   final String baseUrl;
   final String jwtToken;
+  E2eEncryptionService? encryptionService;
   late final FileTransferTransport _transport;
 
-  FileService({required this.baseUrl, required this.jwtToken}) {
+  FileService({required this.baseUrl, required this.jwtToken, this.encryptionService}) {
     _transport = InternetFileTransferTransport(baseUrl: baseUrl, jwtToken: jwtToken);
   }
 
@@ -26,6 +30,8 @@ class FileService {
     required String contentType,
     required int fileSize,
     String? checksum,
+    bool isEncrypted = false,
+    String? encryptedKeyEnvelope,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/files/metadata'),
@@ -36,6 +42,8 @@ class FileService {
         'contentType': contentType,
         'fileSize': fileSize,
         'checksum': checksum,
+        'isEncrypted': isEncrypted,
+        'encryptedKeyEnvelope': encryptedKeyEnvelope,
       }),
     );
 
@@ -93,6 +101,33 @@ class FileService {
 
   Future<File> downloadFile(FileMetadata metadata, Function(double) onProgress) async {
     final directory = await getApplicationDocumentsDirectory();
+
+    if (metadata.isEncrypted && metadata.encryptedKeyEnvelope != null && encryptionService != null) {
+      final tempDir = await getTemporaryDirectory();
+      final encryptedDownloadedFile = await _transport.downloadFile(
+        metadata: metadata,
+        saveDirectory: tempDir.path,
+        onProgress: onProgress,
+      );
+
+      final safeName = metadata.originalFileName.replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
+      final decryptedFilePath = p.join(directory.path, safeName);
+      final decryptedFile = File(decryptedFilePath);
+
+      await encryptionService!.decryptFile(
+        encryptedFile: encryptedDownloadedFile,
+        encryptedKeyEnvelopeJson: metadata.encryptedKeyEnvelope!,
+        senderOfflineMeshId: metadata.senderOfflineMeshId,
+        targetFile: decryptedFile,
+      );
+
+      if (await encryptedDownloadedFile.exists() && encryptedDownloadedFile.path != decryptedFile.path) {
+        await encryptedDownloadedFile.delete();
+      }
+
+      return decryptedFile;
+    }
+
     return await _transport.downloadFile(
       metadata: metadata, 
       saveDirectory: directory.path, 

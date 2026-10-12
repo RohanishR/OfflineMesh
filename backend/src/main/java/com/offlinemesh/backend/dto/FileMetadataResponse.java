@@ -20,6 +20,8 @@ public class FileMetadataResponse {
     private String contentType;
     private Long fileSize;
     private String checksum;
+    private Boolean isEncrypted;
+    private String encryptedKeyEnvelope;
     private FileTransferStatus status;
     private Instant createdAt;
     private Instant updatedAt;

@@ -35,9 +35,8 @@ class _FileDetailsScreenState extends State<FileDetailsScreen> {
 
       // Verify Checksum if provided
       if (widget.fileMetadata.checksum != null) {
-        var bytes = await downloadedFile.readAsBytes();
-        var digest = sha256.convert(bytes);
-        if (digest.toString() != widget.fileMetadata.checksum) {
+        var sha256Digest = await sha256.bind(downloadedFile.openRead()).last;
+        if (sha256Digest.toString() != widget.fileMetadata.checksum) {
           throw Exception('Checksum verification failed!');
         }
       }
@@ -64,6 +63,8 @@ class _FileDetailsScreenState extends State<FileDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasLocalFile = widget.fileMetadata.localFilePath != null;
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('File Details'),
@@ -93,26 +94,32 @@ class _FileDetailsScreenState extends State<FileDetailsScreen> {
               Text('Checksum: ${widget.fileMetadata.checksum}'),
             ],
             const Spacer(),
-            if (_isDownloading) ...[
-              LinearProgressIndicator(value: _downloadProgress),
+            if (hasLocalFile) ...[
               const SizedBox(height: 8),
-              Text('Downloading... ${(_downloadProgress * 100).toStringAsFixed(1)}%'),
-            ],
-            if (_downloadPath != null) ...[
-              const SizedBox(height: 8),
-              Text('Saved to: $_downloadPath', style: const TextStyle(color: Colors.green)),
-            ],
-            const SizedBox(height: 16),
-            Center(
-              child: ElevatedButton.icon(
-                onPressed: _isDownloading || widget.fileMetadata.status != 'AVAILABLE' ? null : _downloadFile,
-                icon: const Icon(Icons.download),
-                label: const Text('Download / Verify'),
-              ),
-            )
+              Text('Available locally at:\n${widget.fileMetadata.localFilePath}', style: const TextStyle(color: Colors.green)),
+            ] else ...[
+              if (_isDownloading) ...[
+                LinearProgressIndicator(value: _downloadProgress),
+                const SizedBox(height: 8),
+                Text('Downloading... ${(_downloadProgress * 100).toStringAsFixed(1)}%'),
+              ],
+              if (_downloadPath != null) ...[
+                const SizedBox(height: 8),
+                Text('Saved to: $_downloadPath', style: const TextStyle(color: Colors.green)),
+              ],
+              const SizedBox(height: 16),
+              Center(
+                child: ElevatedButton.icon(
+                  onPressed: _isDownloading || widget.fileMetadata.status != 'AVAILABLE' ? null : _downloadFile,
+                  icon: const Icon(Icons.download),
+                  label: const Text('Download from Server'),
+                ),
+              )
+            ]
           ],
         ),
       ),
     );
   }
 }
+

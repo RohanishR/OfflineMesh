@@ -36,11 +36,19 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.6.0
-  file_picker: ^11.0.3
+  file_picker: ^8.0.7
   path_provider: ^2.1.5
   crypto: ^3.0.7
   permission_handler: ^12.0.3
   path: ^1.9.0
+  shared_preferences: ^2.5.3
+  uuid: ^4.6.0
+  flutter_bluetooth_serial: ^0.4.0
+  bt_classic: ^1.0.2
+  stomp_dart_client: ^1.0.0
+  flutter_webrtc: ^0.10.4
+  cryptography: ^2.9.0
+  flutter_secure_storage: ^10.3.4
 
 dev_dependencies:
   flutter_test:
