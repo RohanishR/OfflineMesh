@@ -57,6 +57,13 @@ public class FileMetadata {
     @Column(name = "storage_key")
     private String storageKey;
 
+    @Column(name = "is_encrypted", nullable = false)
+    @Builder.Default
+    private Boolean isEncrypted = false;
+
+    @Column(name = "encrypted_key_envelope", columnDefinition = "TEXT")
+    private String encryptedKeyEnvelope;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private FileTransferStatus status;

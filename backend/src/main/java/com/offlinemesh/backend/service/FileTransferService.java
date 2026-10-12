@@ -36,6 +36,10 @@ public class FileTransferService {
             throw new UnauthorizedMessagingException("Only the sender can upload the file");
         }
 
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("Cannot upload empty file");
+        }
+
         if (metadata.getStatus() == FileTransferStatus.COMPLETED || metadata.getStatus() == FileTransferStatus.AVAILABLE) {
             throw new IllegalStateException("File is already uploaded");
         }

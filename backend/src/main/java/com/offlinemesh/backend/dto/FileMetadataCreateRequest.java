@@ -15,4 +15,6 @@ public class FileMetadataCreateRequest {
     private String contentType;
     private Long fileSize;
     private String checksum;
+    private Boolean isEncrypted;
+    private String encryptedKeyEnvelope;
 }

@@ -45,6 +45,8 @@ public class FileMetadataService {
                 .contentType(request.getContentType())
                 .fileSize(request.getFileSize())
                 .checksum(request.getChecksum())
+                .isEncrypted(Boolean.TRUE.equals(request.getIsEncrypted()))
+                .encryptedKeyEnvelope(request.getEncryptedKeyEnvelope())
                 .status(FileTransferStatus.PENDING)
                 .build();
 
@@ -90,6 +92,8 @@ public class FileMetadataService {
                 .contentType(metadata.getContentType())
                 .fileSize(metadata.getFileSize())
                 .checksum(metadata.getChecksum())
+                .isEncrypted(metadata.getIsEncrypted())
+                .encryptedKeyEnvelope(metadata.getEncryptedKeyEnvelope())
                 .status(metadata.getStatus())
                 .createdAt(metadata.getCreatedAt())
                 .updatedAt(metadata.getUpdatedAt())

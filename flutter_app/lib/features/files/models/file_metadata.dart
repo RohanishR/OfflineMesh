@@ -9,6 +9,10 @@ class FileMetadata {
   final String status;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  String? localFilePath;
+  String? transport;
+  final bool isEncrypted;
+  final String? encryptedKeyEnvelope;
 
   FileMetadata({
     required this.id,
@@ -21,6 +25,10 @@ class FileMetadata {
     required this.status,
     required this.createdAt,
     this.updatedAt,
+    this.localFilePath,
+    this.transport,
+    this.isEncrypted = false,
+    this.encryptedKeyEnvelope,
   });
 
   factory FileMetadata.fromJson(Map<String, dynamic> json) {
@@ -35,6 +43,10 @@ class FileMetadata {
       status: json['status'],
       createdAt: DateTime.parse(json['createdAt']),
       updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
+      localFilePath: json['localFilePath'],
+      transport: json['transport'],
+      isEncrypted: json['isEncrypted'] == true,
+      encryptedKeyEnvelope: json['encryptedKeyEnvelope'],
     );
   }
 
@@ -50,6 +62,10 @@ class FileMetadata {
       'status': status,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
+      'localFilePath': localFilePath,
+      'transport': transport,
+      'isEncrypted': isEncrypted,
+      'encryptedKeyEnvelope': encryptedKeyEnvelope,
     };
   }
 }

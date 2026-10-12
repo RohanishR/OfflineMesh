@@ -9,11 +9,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/main.dart';
+import 'package:flutter_app/core/network/auth_service.dart';
+import 'package:flutter_app/features/files/services/file_service.dart';
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+    final authService = AuthService(baseUrl: 'http://localhost');
+    final fileService = FileService(baseUrl: 'http://localhost', jwtToken: '');
+    await tester.pumpWidget(MaterialApp(
+      home: MyHomePage(
+        title: 'OfflineMesh',
+        authService: authService,
+        fileService: fileService,
+      ),
+    ));
 
     // Verify that our counter starts at 0.
     expect(find.text('0'), findsOneWidget);
