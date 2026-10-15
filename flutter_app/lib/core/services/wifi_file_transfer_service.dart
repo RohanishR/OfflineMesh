@@ -93,14 +93,15 @@ class WifiFileTransferService {
       _incomingFilesController.add(completedMetadata);
     }));
 
+    final List<int> headerBuffer = [];
     try {
       await for (final chunk in client) {
         if (!metadataParsed) {
           // Find newline
           final newlineIndex = chunk.indexOf(10); // '\n' is 10
           if (newlineIndex != -1) {
-            final headerBytes = chunk.sublist(0, newlineIndex);
-            final headerStr = utf8.decode(headerBytes);
+            headerBuffer.addAll(chunk.sublist(0, newlineIndex));
+            final headerStr = utf8.decode(headerBuffer);
             final payload = jsonDecode(headerStr);
             
             if (payload['protocolVersion'] == 1 && payload['metadata'] != null) {
@@ -127,6 +128,9 @@ class WifiFileTransferService {
               client.destroy();
               return;
             }
+          } else {
+            // Buffer partial header chunk until newline arrives
+            headerBuffer.addAll(chunk);
           }
         } else {
           // Metadata already parsed, just stream bytes

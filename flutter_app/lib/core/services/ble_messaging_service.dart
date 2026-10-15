@@ -7,12 +7,14 @@ import '../models/message.dart';
 import '../models/user.dart';
 import '../models/ble_discovered_device.dart';
 import '../transport/transport_type.dart';
+import '../security/e2e_encryption_service.dart';
 
 class BleMessagingService {
   static const MethodChannel _channel = MethodChannel('com.offlinemesh/ble_messaging');
   static const EventChannel _eventChannel = EventChannel('com.offlinemesh/ble_messaging/events');
 
   final UserProfile currentUser;
+  E2eEncryptionService? encryptionService;
   
   // Mappings: BLE MAC Address -> OfflineMesh ID
   final Map<String, String> _addressToOfflineMeshId = {};
@@ -22,7 +24,7 @@ class BleMessagingService {
 
   StreamSubscription? _eventSubscription;
 
-  BleMessagingService({required this.currentUser});
+  BleMessagingService({required this.currentUser, this.encryptionService});
 
   Future<void> initialize() async {
     try {
@@ -80,11 +82,21 @@ class BleMessagingService {
   }
 
   void _sendHandshake(String address) {
-    final payload = {
+    final payload = <String, dynamic>{
       'protocolVersion': 1,
       'type': 'IDENTITY_ANNOUNCEMENT',
       'offlineMeshId': currentUser.offlineMeshId,
     };
+
+    if (encryptionService != null) {
+      final pubKey = encryptionService!.identityPublicKeyBase64;
+      if (pubKey != null) {
+        payload['publicKey'] = pubKey;
+        payload['keyId'] = encryptionService!.identityKeyId;
+        payload['fingerprint'] = encryptionService!.fingerprint;
+      }
+    }
+
     final jsonStr = jsonEncode(payload);
     _channel.invokeMethod('sendMessage', {
       'address': address,
@@ -105,6 +117,19 @@ class BleMessagingService {
         if (offlineMeshId != null) {
           _addressToOfflineMeshId[address] = offlineMeshId;
           debugPrint('BLE handshake verified: $address is $offlineMeshId');
+
+          final remotePubKey = payload['publicKey'] as String?;
+          final remoteKeyId = payload['keyId'] as String?;
+          final remoteFingerprint = payload['fingerprint'] as String?;
+
+          if (remotePubKey != null && remoteKeyId != null && encryptionService != null) {
+            encryptionService!.registerPeerKey(
+              offlineMeshId: offlineMeshId,
+              publicKeyBase64: remotePubKey,
+              keyId: remoteKeyId,
+              fingerprint: remoteFingerprint,
+            );
+          }
         }
       } else if (type == 'CHAT_MESSAGE') {
         // Validate recipient

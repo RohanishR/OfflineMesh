@@ -1,5 +1,7 @@
 package com.example.flutter_app
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -22,6 +24,9 @@ class MainActivity: FlutterActivity() {
     private val BLE_MESSAGING_EVENT_CHANNEL = "com.offlinemesh/ble_messaging/events"
     private val bleMessagingManager by lazy { BleMessagingManager(this) }
 
+    private val MULTICAST_CHANNEL = "com.offlinemesh/wifi_multicast"
+    private var multicastLock: WifiManager.MulticastLock? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
@@ -40,5 +45,38 @@ class MainActivity: FlutterActivity() {
         val bleMsgMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLE_MESSAGING_CHANNEL)
         val bleMsgEventChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, BLE_MESSAGING_EVENT_CHANNEL)
         bleMessagingManager.setupChannels(bleMsgMethodChannel, bleMsgEventChannel)
+
+        val multicastMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MULTICAST_CHANNEL)
+        multicastMethodChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "acquireMulticastLock" -> {
+                    try {
+                        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                        if (multicastLock == null) {
+                            multicastLock = wifiManager.createMulticastLock("OfflineMeshMulticastLock").apply {
+                                setReferenceCounted(true)
+                            }
+                        }
+                        if (multicastLock?.isHeld != true) {
+                            multicastLock?.acquire()
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("LOCK_ERROR", "Failed to acquire MulticastLock: ${e.message}", null)
+                    }
+                }
+                "releaseMulticastLock" -> {
+                    try {
+                        if (multicastLock?.isHeld == true) {
+                            multicastLock?.release()
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("LOCK_ERROR", "Failed to release MulticastLock: ${e.message}", null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 }

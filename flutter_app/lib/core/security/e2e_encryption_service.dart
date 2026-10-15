@@ -86,6 +86,7 @@ class E2eEncryptionService {
 
   String? get identityKeyId => _identityKeyId;
   String? get fingerprint => _fingerprint;
+  String? get identityPublicKeyBase64 => _identityPublicKey != null ? base64Encode(_identityPublicKey!.bytes) : null;
 
   Future<String?> getPublicKeyBase64() async {
     if (_identityPublicKey == null) return null;
@@ -229,6 +230,40 @@ class E2eEncryptionService {
     }
 
     throw Exception('Public key not found for contact $offlineMeshId');
+  }
+
+  /// Registers or updates a contact public key received directly over local transport (BLE / Wi-Fi LAN).
+  Future<void> registerPeerKey({
+    required String offlineMeshId,
+    required String publicKeyBase64,
+    required String keyId,
+    String? fingerprint,
+  }) async {
+    final computedFp = fingerprint ?? await computeFingerprint(base64Decode(publicKeyBase64));
+    ContactSecurityInfo? cached = _contactCache[offlineMeshId];
+    if (cached != null) {
+      if (cached.publicKeyBase64 != publicKeyBase64) {
+        cached = cached.copyWith(
+          publicKeyBase64: publicKeyBase64,
+          keyId: keyId,
+          fingerprint: computedFp,
+          status: VerificationStatus.KEY_CHANGED,
+          previousFingerprint: cached.fingerprint,
+          lastSeenAt: DateTime.now(),
+        );
+        _saveContact(cached);
+      }
+    } else {
+      cached = ContactSecurityInfo(
+        offlineMeshId: offlineMeshId,
+        publicKeyBase64: publicKeyBase64,
+        keyId: keyId,
+        fingerprint: computedFp,
+        status: VerificationStatus.UNVERIFIED,
+        lastSeenAt: DateTime.now(),
+      );
+      _saveContact(cached);
+    }
   }
 
   void markContactVerified(String offlineMeshId, bool isVerified) {

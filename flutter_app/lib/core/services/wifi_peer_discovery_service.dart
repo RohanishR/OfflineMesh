@@ -2,13 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import '../models/discovered_peer.dart';
 import '../models/user.dart';
+import '../security/e2e_encryption_service.dart';
 
 class WifiPeerDiscoveryService {
   static const int _discoveryPort = 45454;
   static const Duration _broadcastInterval = Duration(seconds: 3);
   static const Duration _peerTimeout = Duration(seconds: 10);
+  static const MethodChannel _multicastChannel = MethodChannel('com.offlinemesh/wifi_multicast');
 
   RawDatagramSocket? _socket;
   Timer? _broadcastTimer;
@@ -23,8 +26,20 @@ class WifiPeerDiscoveryService {
   bool _isDiscovering = false;
   bool get isDiscovering => _isDiscovering;
 
+  E2eEncryptionService? encryptionService;
+
+  WifiPeerDiscoveryService({this.encryptionService});
+
   Future<void> startDiscovery(UserProfile currentUser) async {
     if (_isDiscovering) return;
+
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        await _multicastChannel.invokeMethod('acquireMulticastLock');
+      } catch (e) {
+        debugPrint('Could not acquire multicast lock: $e');
+      }
+    }
     
     try {
       _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
@@ -51,6 +66,11 @@ class WifiPeerDiscoveryService {
     } catch (e) {
       debugPrint('Error starting Wi-Fi Discovery: $e');
       _isDiscovering = false;
+      if (!kIsWeb && Platform.isAndroid) {
+        try {
+          await _multicastChannel.invokeMethod('releaseMulticastLock');
+        } catch (_) {}
+      }
     }
   }
 
@@ -63,18 +83,35 @@ class WifiPeerDiscoveryService {
     _isDiscovering = false;
     _peers.clear();
     _notifyListeners();
+
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        _multicastChannel.invokeMethod('releaseMulticastLock');
+      } catch (e) {
+        debugPrint('Could not release multicast lock: $e');
+      }
+    }
   }
 
   void _broadcastPresence(UserProfile currentUser) {
     if (_socket == null) return;
     
-    final payload = {
+    final payload = <String, dynamic>{
       'offlineMeshId': currentUser.offlineMeshId,
       'displayName': currentUser.username,
-      'deviceId': currentUser.offlineMeshId, // using OfflineMeshId as device ID for now
+      'deviceId': currentUser.offlineMeshId,
       'port': _discoveryPort,
       'protocolVersion': 1,
     };
+
+    if (encryptionService != null) {
+      final pubKey = encryptionService!.identityPublicKeyBase64;
+      if (pubKey != null) {
+        payload['publicKey'] = pubKey;
+        payload['keyId'] = encryptionService!.identityKeyId;
+        payload['fingerprint'] = encryptionService!.fingerprint;
+      }
+    }
     
     final data = utf8.encode(jsonEncode(payload));
     
@@ -100,6 +137,19 @@ class WifiPeerDiscoveryService {
       final displayName = payload['displayName'] as String? ?? 'Unknown';
       final deviceId = payload['deviceId'] as String? ?? offlineMeshId;
       final port = payload['port'] as int? ?? _discoveryPort;
+
+      final remotePubKey = payload['publicKey'] as String?;
+      final remoteKeyId = payload['keyId'] as String?;
+      final remoteFingerprint = payload['fingerprint'] as String?;
+
+      if (remotePubKey != null && remoteKeyId != null && encryptionService != null) {
+        encryptionService!.registerPeerKey(
+          offlineMeshId: offlineMeshId,
+          publicKeyBase64: remotePubKey,
+          keyId: remoteKeyId,
+          fingerprint: remoteFingerprint,
+        );
+      }
       
       final now = DateTime.now();
       

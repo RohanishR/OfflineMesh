@@ -93,16 +93,22 @@ class _HomeScreenState extends State<HomeScreen> {
       _e2eEncryptionService = e2ee;
       _messageService.encryptionService = e2ee;
       _fileService.encryptionService = e2ee;
+      _messageService.connectStomp();
 
       if (mounted) {
         setState(() {
           _currentUser = user;
           
           // Initialize WIFI_LAN services now that we have the current user
+          _discoveryService.encryptionService = _e2eEncryptionService;
+
           _wifiMessagingService = WifiMessagingService(currentUser: user);
           _wifiMessagingService.initialize();
           
-          _bluetoothMessagingService = BluetoothMessagingService(currentUser: user);
+          _bluetoothMessagingService = BluetoothMessagingService(
+            currentUser: user,
+            encryptionService: _e2eEncryptionService,
+          );
           _bluetoothMessagingService.initialize();
           
           _wifiFileTransferService = WifiFileTransferService(currentUser: user);
@@ -117,7 +123,10 @@ class _HomeScreenState extends State<HomeScreen> {
           _bleDiscoveryService = BleDiscoveryService();
           _bleDiscoveryService.initialize();
 
-          _bleMessagingService = BleMessagingService(currentUser: user);
+          _bleMessagingService = BleMessagingService(
+            currentUser: user,
+            encryptionService: _e2eEncryptionService,
+          );
           _bleMessagingService.initialize();
           
           _routingService = RoutingService(
@@ -182,6 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _bleDiscoveryService.shutdown();
       _bleMessagingService.shutdown();
       _routingService.shutdown();
+      _messageService.dispose();
       _webrtcSignalingService.dispose();
       _callService.dispose();
     }

@@ -49,6 +49,7 @@ class RoutingService {
   StreamSubscription? _wifiMessagesSubscription;
   StreamSubscription? _bluetoothMessagesSubscription;
   StreamSubscription? _bleMessagesSubscription;
+  StreamSubscription? _internetMessagesSubscription;
   StreamSubscription? _wifiFilesSubscription;
 
   StreamSubscription? _bluetoothFilesSubscription;
@@ -91,6 +92,10 @@ class RoutingService {
 
     _bleMessagesSubscription = bleMessagingService?.incomingMessages.listen((message) {
       _deliverIncomingMessage(message, TransportType.BLE);
+    });
+
+    _internetMessagesSubscription = messageService.incomingMessages.listen((message) {
+      _deliverIncomingMessage(message, TransportType.INTERNET);
     });
 
     _wifiFilesSubscription = wifiFileTransferService.incomingFiles.listen((fileMeta) {
@@ -162,6 +167,8 @@ class RoutingService {
     _blePeersSubscription?.cancel();
     _wifiMessagesSubscription?.cancel();
     _bluetoothMessagesSubscription?.cancel();
+    _bleMessagesSubscription?.cancel();
+    _internetMessagesSubscription?.cancel();
     _wifiFilesSubscription?.cancel();
     _bluetoothFilesSubscription?.cancel();
     _incomingMessagesController.close();
@@ -174,6 +181,14 @@ class RoutingService {
       return peer.isReachable;
     } catch (e) {
       return false;
+    }
+  }
+
+  DiscoveredPeer? getNearbyPeer(String offlineMeshId) {
+    try {
+      return _activePeers.firstWhere((p) => p.offlineMeshId == offlineMeshId && p.isReachable);
+    } catch (e) {
+      return null;
     }
   }
 

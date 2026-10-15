@@ -44,6 +44,7 @@ class CallService {
   Stream<MediaStream?> get remoteStreamStream => _remoteStreamController.stream;
 
   StreamSubscription? _signalingSubscription;
+  StreamSubscription? _wifiSignalingSubscription;
 
   CallService({
     required this.signalingService,
@@ -53,6 +54,10 @@ class CallService {
 
   void initialize() {
     _signalingSubscription = signalingService.incomingSignalingMessages.listen(_handleIncomingSignal);
+    _wifiSignalingSubscription = routingService.wifiMessagingService.incomingSignalingMessages.listen((message) {
+      _isLocalWifiCall = true;
+      _handleIncomingSignal(message);
+    });
   }
 
   void _setState(CallSessionState state) {
@@ -352,6 +357,19 @@ class CallService {
       iceCandidate: iceCandidate,
       timestamp: DateTime.now(),
     );
+
+    // If active call is local Wi-Fi call or nearby peer exists while Internet signaling is down
+    if (_isLocalWifiCall || (routingService.isPeerNearby(recipientId) && !signalingService.isConnected)) {
+      final peer = routingService.getNearbyPeer(recipientId);
+      if (peer != null) {
+        routingService.wifiMessagingService.sendSignalingMessage(peer, message).catchError((e) {
+          debugPrint('Local Wi-Fi signaling send failed, falling back to Internet: $e');
+          signalingService.sendSignalingMessage(message);
+        });
+        return;
+      }
+    }
+
     signalingService.sendSignalingMessage(message);
   }
 
@@ -376,6 +394,7 @@ class CallService {
   void dispose() {
     _cleanupCall();
     _signalingSubscription?.cancel();
+    _wifiSignalingSubscription?.cancel();
     _callStateController.close();
     _remotePeerController.close();
     _localStreamController.close();

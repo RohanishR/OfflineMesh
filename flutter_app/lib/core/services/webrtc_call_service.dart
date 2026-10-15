@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -41,7 +42,7 @@ class WebRtcCallService {
 
     _peerConnection!.onIceCandidate = (RTCIceCandidate candidate) {
       if (onLocalIceCandidateGenerated != null) {
-        onLocalIceCandidateGenerated!(candidate.toMap().toString());
+        onLocalIceCandidateGenerated!(jsonEncode(candidate.toMap()));
       }
     };
 
@@ -124,7 +125,7 @@ class WebRtcCallService {
       await _peerConnection!.setLocalDescription(description);
       
       if (onLocalSdpGenerated != null) {
-        onLocalSdpGenerated!(description.toMap().toString());
+        onLocalSdpGenerated!(jsonEncode(description.toMap()));
       }
     } catch (e) {
       debugPrint('Failed to create SDP offer: $e');
@@ -138,7 +139,7 @@ class WebRtcCallService {
       await _peerConnection!.setLocalDescription(description);
       
       if (onLocalSdpGenerated != null) {
-        onLocalSdpGenerated!(description.toMap().toString());
+        onLocalSdpGenerated!(jsonEncode(description.toMap()));
       }
     } catch (e) {
       debugPrint('Failed to create SDP answer: $e');
