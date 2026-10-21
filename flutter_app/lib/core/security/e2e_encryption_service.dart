@@ -623,6 +623,9 @@ class E2eEncryptionService {
       }
       await decSink.flush();
     } catch (e) {
+      try {
+        await decSink.close();
+      } catch (_) {}
       if (await targetFile.exists()) {
         try {
           await targetFile.delete();
@@ -631,9 +634,9 @@ class E2eEncryptionService {
       throw IntegrityException('File integrity verification failed during decryption.');
     } finally {
       await encRaf.close();
-      await decSink.close();
     }
 
+    await decSink.close();
     return targetFile;
   }
 }

@@ -51,53 +51,18 @@ class WifiFileTransferService {
     FileMetadata? parsedMetadata;
     File? tempFile;
     IOSink? fileSink;
-    
-    // Checksum stream
-    final hashSink = sha256.startChunkedConversion(_DigestSink((digest) async {
-      // Done hashing
-      if (parsedMetadata == null || tempFile == null) return;
-      
-      final String calculatedHash = digest.toString();
-      debugPrint('Calculated SHA-256: $calculatedHash');
-      
-      if (parsedMetadata.checksum != null && parsedMetadata.checksum != calculatedHash) {
-        debugPrint('Checksum mismatch! Deleting corrupted file.');
-        if (await tempFile.exists()) await tempFile.delete();
-        return;
-      }
+    int receivedBytes = 0;
+    bool hasError = false;
+    String? calculatedHash;
 
-      // Rename temp file to actual file
-      final directory = await getApplicationDocumentsDirectory();
-      // Basic sanitization
-      final safeName = parsedMetadata.originalFileName.replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
-      final finalPath = p.join(directory.path, safeName);
-      
-      await tempFile.rename(finalPath);
-      parsedMetadata.localFilePath = finalPath;
-      
-      // Update status
-      final completedMetadata = FileMetadata(
-        id: parsedMetadata.id,
-        senderOfflineMeshId: parsedMetadata.senderOfflineMeshId,
-        recipientOfflineMeshId: parsedMetadata.recipientOfflineMeshId,
-        originalFileName: parsedMetadata.originalFileName,
-        contentType: parsedMetadata.contentType,
-        fileSize: parsedMetadata.fileSize,
-        checksum: parsedMetadata.checksum,
-        status: 'COMPLETED',
-        createdAt: parsedMetadata.createdAt,
-        updatedAt: DateTime.now(),
-        localFilePath: finalPath,
-      );
-      
-      _incomingFilesController.add(completedMetadata);
+    final hashSink = sha256.startChunkedConversion(_DigestSink((digest) {
+      calculatedHash = digest.toString();
     }));
 
     final List<int> headerBuffer = [];
     try {
       await for (final chunk in client) {
         if (!metadataParsed) {
-          // Find newline
           final newlineIndex = chunk.indexOf(10); // '\n' is 10
           if (newlineIndex != -1) {
             headerBuffer.addAll(chunk.sublist(0, newlineIndex));
@@ -118,35 +83,81 @@ class WifiFileTransferService {
               fileSink = tempFile.openWrite();
               metadataParsed = true;
               
-              // Process remaining bytes in this chunk
               final remaining = chunk.sublist(newlineIndex + 1);
               if (remaining.isNotEmpty) {
                 fileSink.add(remaining);
                 hashSink.add(remaining);
+                receivedBytes += remaining.length;
               }
             } else {
               client.destroy();
               return;
             }
           } else {
-            // Buffer partial header chunk until newline arrives
             headerBuffer.addAll(chunk);
           }
         } else {
-          // Metadata already parsed, just stream bytes
           fileSink?.add(chunk);
           hashSink.add(chunk);
+          receivedBytes += chunk.length;
         }
       }
     } catch (e) {
-      debugPrint('Error receiving file: $e');
+      debugPrint('Error receiving Wi-Fi LAN file: $e');
+      hasError = true;
     } finally {
       if (fileSink != null) {
-        await fileSink.flush();
-        await fileSink.close();
+        try {
+          await fileSink.flush();
+          await fileSink.close();
+        } catch (_) {}
       }
       hashSink.close();
       client.destroy();
+
+      if (parsedMetadata != null && tempFile != null && await tempFile.exists()) {
+        if (hasError || receivedBytes != parsedMetadata.fileSize) {
+          debugPrint('Incomplete file transfer! Expected ${parsedMetadata.fileSize} bytes, got $receivedBytes bytes. Deleting temporary file.');
+          try {
+            await tempFile.delete();
+          } catch (_) {}
+        } else if (parsedMetadata.checksum != null && calculatedHash != null && parsedMetadata.checksum != calculatedHash) {
+          debugPrint('Checksum mismatch! Expected ${parsedMetadata.checksum}, got $calculatedHash. Deleting corrupted file.');
+          try {
+            await tempFile.delete();
+          } catch (_) {}
+        } else {
+          // Success: Rename temp file to permanent documents directory
+          try {
+            final directory = await getApplicationDocumentsDirectory();
+            final safeName = parsedMetadata.originalFileName.replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
+            final finalPath = p.join(directory.path, safeName);
+            
+            await tempFile.rename(finalPath);
+            parsedMetadata.localFilePath = finalPath;
+
+            final completedMetadata = FileMetadata(
+              id: parsedMetadata.id,
+              senderOfflineMeshId: parsedMetadata.senderOfflineMeshId,
+              recipientOfflineMeshId: parsedMetadata.recipientOfflineMeshId,
+              originalFileName: parsedMetadata.originalFileName,
+              contentType: parsedMetadata.contentType,
+              fileSize: parsedMetadata.fileSize,
+              checksum: parsedMetadata.checksum,
+              status: 'COMPLETED',
+              createdAt: parsedMetadata.createdAt,
+              updatedAt: DateTime.now(),
+              localFilePath: finalPath,
+              isEncrypted: parsedMetadata.isEncrypted,
+              encryptedKeyEnvelope: parsedMetadata.encryptedKeyEnvelope,
+            );
+            
+            _incomingFilesController.add(completedMetadata);
+          } catch (e) {
+            debugPrint('Failed to save completed file: $e');
+          }
+        }
+      }
     }
   }
 

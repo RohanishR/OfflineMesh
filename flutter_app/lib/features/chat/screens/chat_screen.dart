@@ -42,15 +42,13 @@ class _ChatScreenState extends State<ChatScreen> {
     
     // Subscribe to real-time incoming messages
     _incomingSub = widget.routingService.incomingMessages.listen((message) {
-      if (message.senderOfflineMeshId == widget.friend.offlineMeshId) {
+      if (message.senderOfflineMeshId == widget.friend.offlineMeshId ||
+          (message.senderOfflineMeshId == widget.routingService.wifiMessagingService.currentUser.offlineMeshId)) {
         if (mounted) {
           setState(() {
-            // Check for duplicates
-            if (!_messages.any((m) => m.id == message.id)) {
-              _messages.add(message);
-              // Sort by date just in case
-              _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-            }
+            _messages.removeWhere((m) => m.id == message.id);
+            _messages.add(message);
+            _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
           });
         }
       }
@@ -61,17 +59,40 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _errorMessage = null;
     });
+
+    // 1. Instantly load locally persisted messages for offline capability
     try {
-      final messages = await widget.routingService.messageService.getConversationHistory(widget.friend.offlineMeshId);
-      setState(() {
-        _messages = messages;
-        _isLoading = false;
-      });
+      final localMsgs = await widget.routingService.localStorageService.loadConversation(widget.friend.offlineMeshId);
+      if (mounted && localMsgs.isNotEmpty) {
+        setState(() {
+          _messages = localMsgs;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString();
-        _isLoading = false;
-      });
+      debugPrint('Error loading local messages: $e');
+    }
+
+    // 2. Fetch remote conversation history from backend when online and merge
+    try {
+      final remoteMessages = await widget.routingService.messageService.getConversationHistory(widget.friend.offlineMeshId);
+      await widget.routingService.localStorageService.saveMessages(widget.friend.offlineMeshId, remoteMessages);
+      final merged = await widget.routingService.localStorageService.loadConversation(widget.friend.offlineMeshId);
+      if (mounted) {
+        setState(() {
+          _messages = merged;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          if (_messages.isEmpty) {
+            _errorMessage = 'Offline mode: no local history found ($e)';
+          }
+        });
+      }
     }
   }
 
@@ -89,10 +110,9 @@ class _ChatScreenState extends State<ChatScreen> {
       
       if (mounted) {
         setState(() {
-          // If it was sent via WIFI_LAN, it won't be in the backend history yet, so we add it locally
-          if (!_messages.any((m) => m.id == msg.id)) {
-            _messages.add(msg);
-          }
+          _messages.removeWhere((m) => m.id == msg.id);
+          _messages.add(msg);
+          _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
         });
       }
     } catch (e) {

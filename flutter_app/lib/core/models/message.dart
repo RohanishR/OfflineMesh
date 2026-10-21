@@ -18,12 +18,19 @@ class Message {
   });
 
   factory Message.fromJson(Map<String, dynamic> json) {
+    TransportType? parsedTransport;
+    if (json['transport'] != null) {
+      try {
+        parsedTransport = TransportType.values.byName(json['transport']);
+      } catch (_) {}
+    }
     return Message(
       id: json['id']?.toString() ?? '',
       senderOfflineMeshId: json['senderOfflineMeshId'] ?? '',
       content: json['content'] ?? '',
       createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : DateTime.now(),
       status: json['status'] ?? 'sent',
+      transport: parsedTransport,
     );
   }
 
@@ -34,6 +41,7 @@ class Message {
       'content': content,
       'createdAt': createdAt.toIso8601String(),
       'status': status,
+      'transport': transport?.name,
     };
   }
 

@@ -184,7 +184,7 @@ void main() {
       expect(fp1!.contains(':'), isTrue);
 
       final pubBytes = base64Decode(await aliceService.getPublicKeyBase64() ?? '');
-      final computedFp = await aliceService.computeFingerprint(pubBytes);
+      final computedFp = await E2eEncryptionService.computeFingerprint(pubBytes);
       expect(computedFp, fp1);
     });
 

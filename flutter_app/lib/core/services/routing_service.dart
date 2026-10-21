@@ -18,6 +18,7 @@ import 'bluetooth_messaging_service.dart';
 import 'bluetooth_file_transfer_service.dart';
 import 'ble_discovery_service.dart';
 import 'ble_messaging_service.dart';
+import 'local_storage_service.dart';
 import '../models/discovered_peer.dart';
 import '../models/ble_discovered_device.dart';
 import '../../features/files/models/file_metadata.dart';
@@ -34,6 +35,7 @@ class RoutingService {
   final BleDiscoveryService? bleDiscoveryService;
   final BleMessagingService? bleMessagingService;
   final E2eEncryptionService? encryptionService;
+  final LocalStorageService localStorageService;
 
   final _incomingMessagesController = StreamController<Message>.broadcast();
   Stream<Message> get incomingMessages => _incomingMessagesController.stream;
@@ -68,11 +70,15 @@ class RoutingService {
     this.bleDiscoveryService,
     this.bleMessagingService,
     this.encryptionService,
-  });
+    LocalStorageService? localStorageService,
+  }) : localStorageService = localStorageService ?? LocalStorageService();
 
   void initialize() {
+    _loadPersistedFiles();
+
     _peersSubscription = discoveryService.peersStream.listen((peers) {
       _activePeers = peers;
+      flushOutbox();
     });
 
     _blePeersSubscription = bleDiscoveryService?.devicesStream.listen((peers) {
@@ -80,6 +86,7 @@ class RoutingService {
       for (var peer in peers) {
         bleMessagingService?.connectAndHandshake(peer);
       }
+      flushOutbox();
     });
 
     _wifiMessagesSubscription = wifiMessagingService.incomingMessages.listen((message) {
@@ -105,6 +112,21 @@ class RoutingService {
     _bluetoothFilesSubscription = bluetoothFileTransferService.incomingFiles.listen((fileMeta) {
       _deliverIncomingFile(fileMeta, 'BLUETOOTH');
     });
+
+    flushOutbox();
+  }
+
+  Future<void> _loadPersistedFiles() async {
+    try {
+      final sent = await localStorageService.loadSentFiles();
+      final received = await localStorageService.loadReceivedFiles();
+      _localSentFiles.clear();
+      _localSentFiles.addAll(sent);
+      _localReceivedFiles.clear();
+      _localReceivedFiles.addAll(received);
+    } catch (e) {
+      debugPrint('Error loading persisted files: $e');
+    }
   }
 
   Future<void> _deliverIncomingMessage(Message message, TransportType transport) async {
@@ -124,6 +146,8 @@ class RoutingService {
       }
     }
 
+    // Persist incoming message locally for offline access
+    await localStorageService.saveMessage(message.senderOfflineMeshId, message);
     _incomingMessagesController.add(message);
   }
 
@@ -138,7 +162,6 @@ class RoutingService {
           final safeName = fileMeta.originalFileName.replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
           final decryptedPath = p.join(docDir.path, safeName);
           final decFile = File(decryptedPath);
-          final keyEnvelope = EncryptedEnvelope.fromJsonString(fileMeta.encryptedKeyEnvelope!);
 
           await encryptionService!.decryptFile(
             encryptedFile: encFile,
@@ -158,7 +181,9 @@ class RoutingService {
       }
     }
 
+    _localReceivedFiles.removeWhere((f) => f.id == fileMeta.id);
     _localReceivedFiles.add(fileMeta);
+    await localStorageService.saveReceivedFile(fileMeta);
     _incomingFilesController.add(fileMeta);
   }
 
@@ -259,6 +284,9 @@ class RoutingService {
       status: 'sending',
     );
 
+    // Save initial sending state locally
+    await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
+
     final routes = await getAvailableRoutes(recipientOfflineMeshId);
 
     for (final transport in routes) {
@@ -279,15 +307,18 @@ class RoutingService {
             break;
           case TransportType.INTERNET:
             final backendMsg = await messageService.sendMessage(recipientOfflineMeshId, wireContent);
-            return localMessage.copyWith(
+            final deliveredMsg = localMessage.copyWith(
               id: backendMsg.id,
               createdAt: backendMsg.createdAt,
               status: 'sent',
               transport: TransportType.INTERNET,
             );
+            await localStorageService.saveMessage(recipientOfflineMeshId, deliveredMsg);
+            return deliveredMsg;
         }
         
         localMessage.status = 'sent';
+        await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
         return localMessage;
       } catch (e) {
         debugPrint('$transport message send failed, trying next route: $e');
@@ -296,20 +327,96 @@ class RoutingService {
 
     // 5. BLE Store-And-Forward Queueing (Offline Fallback)
     if (bleMessagingService != null) {
-      debugPrint('No active transports available. Queueing for offline store-and-forward.');
+      debugPrint('No active transports available. Attempting BLE store-and-forward.');
       wireMessage.transport = TransportType.BLE;
       localMessage.transport = TransportType.BLE;
-      localMessage.status = 'queued'; // UI can optionally display this
+      localMessage.status = 'queued';
       try {
         await bleMessagingService!.sendMessage(recipientOfflineMeshId, wireMessage);
+        await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
         return localMessage;
       } catch (e) {
-        debugPrint('Failed to queue offline message: $e');
+        debugPrint('BLE store-and-forward queue failed: $e');
       }
     }
 
-    localMessage.status = 'failed';
-    throw Exception('All transports and offline queueing failed to send message');
+    // 6. Local Persistent Outbox Queue (Offline Fallback for auto-flush on reconnect)
+    debugPrint('Queuing message $messageId in persistent offline outbox.');
+    localMessage.status = 'queued';
+    await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
+    await localStorageService.addToOutbox(
+      recipientOfflineMeshId: recipientOfflineMeshId,
+      message: localMessage,
+      wireContent: wireContent,
+    );
+    return localMessage;
+  }
+
+  bool _isFlushingOutbox = false;
+  Future<void> flushOutbox() async {
+    if (_isFlushingOutbox) return;
+    _isFlushingOutbox = true;
+    try {
+      final queuedItems = await localStorageService.loadOutbox();
+      for (final item in queuedItems) {
+        final recipientId = item['recipientOfflineMeshId'] as String?;
+        final messageId = item['messageId'] as String?;
+        final wireContent = item['wireContent'] as String?;
+        final rawMsg = item['message'] as Map<String, dynamic>?;
+        if (recipientId == null || messageId == null || wireContent == null || rawMsg == null) continue;
+
+        final routes = await getAvailableRoutes(recipientId);
+        if (routes.isEmpty) continue;
+
+        final wireMessage = Message(
+          id: messageId,
+          senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+          content: wireContent,
+          createdAt: DateTime.tryParse(rawMsg['createdAt'] ?? '') ?? DateTime.now(),
+          status: 'sending',
+        );
+
+        bool sent = false;
+        for (final transport in routes) {
+          try {
+            wireMessage.transport = transport;
+            switch (transport) {
+              case TransportType.WIFI_LAN:
+                final peer = _activePeers.firstWhere((p) => p.offlineMeshId == recipientId && p.isReachable);
+                await wifiMessagingService.sendMessage(peer, wireMessage);
+                sent = true;
+                break;
+              case TransportType.BLUETOOTH:
+                await bluetoothMessagingService.sendMessage(recipientId, wireMessage);
+                sent = true;
+                break;
+              case TransportType.BLE:
+                await bleMessagingService!.sendMessage(recipientId, wireMessage);
+                sent = true;
+                break;
+              case TransportType.INTERNET:
+                await messageService.sendMessage(recipientId, wireContent);
+                sent = true;
+                break;
+            }
+            if (sent) {
+              await localStorageService.removeFromOutbox(messageId);
+              final updated = Message.fromJson(rawMsg).copyWith(status: 'sent', transport: transport);
+              await localStorageService.saveMessage(recipientId, updated);
+              _incomingMessagesController.add(updated);
+              debugPrint('Successfully flushed queued message $messageId via $transport');
+              break;
+            }
+          } catch (e) {
+            debugPrint('Failed to flush message $messageId via $transport: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error during outbox flush: $e');
+    } finally {
+      _isFlushingOutbox = false;
+    }
   }
 
   // File Transfer Routing
@@ -377,7 +484,9 @@ class RoutingService {
         try {
           await wifiFileTransferService.sendFile(targetPeer, localMetadata, fileToSend, onProgress);
           localMetadata.transport = 'WIFI_LAN';
+          _localSentFiles.removeWhere((f) => f.id == localMetadata.id);
           _localSentFiles.add(localMetadata);
+          await localStorageService.saveSentFile(localMetadata);
           return localMetadata;
         } catch (e) {
           debugPrint('WIFI_LAN file send failed, trying next route: $e');
@@ -388,7 +497,9 @@ class RoutingService {
       try {
         await bluetoothFileTransferService.sendFile(recipientOfflineMeshId, localMetadata, fileToSend, onProgress);
         localMetadata.transport = 'BLUETOOTH';
+        _localSentFiles.removeWhere((f) => f.id == localMetadata.id);
         _localSentFiles.add(localMetadata);
+        await localStorageService.saveSentFile(localMetadata);
         return localMetadata;
       } catch (e) {
         debugPrint('BLUETOOTH file send failed or unavailable: $e');
@@ -408,6 +519,9 @@ class RoutingService {
       await fileService.uploadFile(backendMetadata, fileToSend, onProgress);
       backendMetadata.transport = 'INTERNET';
       backendMetadata.localFilePath = file.path;
+      _localSentFiles.removeWhere((f) => f.id == backendMetadata.id);
+      _localSentFiles.add(backendMetadata);
+      await localStorageService.saveSentFile(backendMetadata);
       return backendMetadata;
     } finally {
       if (tempEncryptedFile != null && await tempEncryptedFile.exists()) {

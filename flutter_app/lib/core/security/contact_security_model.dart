@@ -55,15 +55,18 @@ class ContactSecurityInfo {
   }
 
   ContactSecurityInfo copyWith({
+    String? publicKeyBase64,
+    String? keyId,
+    String? fingerprint,
     VerificationStatus? status,
     DateTime? lastSeenAt,
     String? previousFingerprint,
   }) {
     return ContactSecurityInfo(
       offlineMeshId: offlineMeshId,
-      publicKeyBase64: publicKeyBase64,
-      keyId: keyId,
-      fingerprint: fingerprint,
+      publicKeyBase64: publicKeyBase64 ?? this.publicKeyBase64,
+      keyId: keyId ?? this.keyId,
+      fingerprint: fingerprint ?? this.fingerprint,
       status: status ?? this.status,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       previousFingerprint: previousFingerprint ?? this.previousFingerprint,
