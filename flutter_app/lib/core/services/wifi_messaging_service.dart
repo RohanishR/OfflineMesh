@@ -18,6 +18,9 @@ class WifiMessagingService {
   final _incomingSignalingController = StreamController<WebRtcSignalingMessage>.broadcast();
   Stream<WebRtcSignalingMessage> get incomingSignalingMessages => _incomingSignalingController.stream;
 
+  final Map<String, String> _peerIpCache = {};
+  String? getKnownIpForPeer(String offlineMeshId) => _peerIpCache[offlineMeshId];
+
   WifiMessagingService({required this.currentUser});
 
   Future<void> initialize() async {
@@ -41,6 +44,7 @@ class WifiMessagingService {
 
   void _handleIncomingConnection(Socket client) {
     final List<int> incomingBytes = [];
+    final clientIp = client.remoteAddress.address;
 
     client.listen(
       (List<int> chunk) {
@@ -56,6 +60,11 @@ class WifiMessagingService {
             final String payloadStr = utf8.decode(incomingBytes);
             final Map<String, dynamic> payload = jsonDecode(payloadStr);
 
+            final senderOfflineMeshId = payload['senderOfflineMeshId'] as String?;
+            if (senderOfflineMeshId != null && senderOfflineMeshId.isNotEmpty) {
+              _peerIpCache[senderOfflineMeshId] = clientIp;
+            }
+
             // Validate protocol and recipient
             if (payload['protocolVersion'] == 1 &&
                 payload['recipientOfflineMeshId'] == currentUser.offlineMeshId) {
@@ -70,7 +79,9 @@ class WifiMessagingService {
               } else {
                 final messageData = payload['message'];
                 if (messageData != null) {
-                  final message = Message.fromJson(messageData);
+                  final message = Message.fromJson(messageData).copyWith(
+                    recipientOfflineMeshId: currentUser.offlineMeshId,
+                  );
                   _incomingMessagesController.add(message);
                 }
               }

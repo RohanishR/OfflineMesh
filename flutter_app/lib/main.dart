@@ -3,11 +3,14 @@ import 'core/config/app_config.dart';
 import 'core/network/auth_service.dart';
 import 'features/files/services/file_service.dart';
 import 'features/auth/screens/splash_screen.dart';
+import 'core/ui/mesh_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppearanceController.instance.load();
+  await AppConfig.initialize();
   // Services are initialised here so the backend URL is defined in one place.
-  // FileService requires a JWT token; in a real flow the token comes from AuthService
-  // after the user logs in. For now we pass an empty token so the app starts cleanly.
+  // Over Local Wi-Fi (No USB / no adb reverse required).
   final authService = AuthService(baseUrl: AppConfig.backendBaseUrl);
   final fileService = FileService(
     baseUrl: AppConfig.backendBaseUrl,
@@ -19,19 +22,35 @@ void main() {
 
 class MyApp extends StatelessWidget {
   final AuthService authService;
-  final FileService fileService; // Keeping this for now if it's injected elsewhere, though HomeScreen instantiates its own. Let's clean it up to just take authService and let HomeScreen handle the rest, or just keep passing it if needed. Actually we only need AuthService at the root.
+  final FileService
+      fileService; // Keeping this for now if it's injected elsewhere, though HomeScreen instantiates its own. Let's clean it up to just take authService and let HomeScreen handle the rest, or just keep passing it if needed. Actually we only need AuthService at the root.
 
-  const MyApp({super.key, required this.authService, required this.fileService});
+  const MyApp(
+      {super.key, required this.authService, required this.fileService});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'OfflineMesh',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: SplashScreen(authService: authService),
+    return ValueListenableBuilder<String>(
+      valueListenable: AppConfig.changes,
+      builder: (context, url, _) {
+        final activeAuth = AuthService(baseUrl: AppConfig.backendBaseUrl);
+        return ValueListenableBuilder<ThemeMode>(
+          valueListenable: AppearanceController.instance,
+          builder: (context, mode, _) => MaterialApp(
+            key: ValueKey(url),
+            title: 'OfflineMesh',
+            debugShowCheckedModeBanner: false,
+            theme: MeshTheme.build(Brightness.light),
+            darkTheme: MeshTheme.build(Brightness.dark),
+            themeMode: mode,
+            themeAnimationDuration:
+                (MediaQuery.maybeOf(context)?.disableAnimations ?? false)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 250),
+            home: SplashScreen(authService: activeAuth),
+          ),
+        );
+      },
     );
   }
 }

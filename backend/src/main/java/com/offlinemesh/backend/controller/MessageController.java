@@ -23,6 +23,7 @@ public class MessageController {
 
     private final MessageService messageService;
     private final UserService userService;
+    private final org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
     @PostMapping("/{offlineMeshId}")
     public ResponseEntity<?> sendMessage(@PathVariable String offlineMeshId, @RequestBody SendMessageRequest request) {
@@ -35,7 +36,10 @@ public class MessageController {
         User currentUser = userService.findByUsername(username);
 
         try {
-            return ResponseEntity.status(HttpStatus.CREATED).body(messageService.sendMessage(currentUser, offlineMeshId, request.getContent()));
+            // The service transaction has committed before publishing the live update.
+            var response = messageService.sendMessage(currentUser, offlineMeshId, request.getContent());
+            messagingTemplate.convertAndSendToUser(offlineMeshId, "/queue/messages", response);
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
         }

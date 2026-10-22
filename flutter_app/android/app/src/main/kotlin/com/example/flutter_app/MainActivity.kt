@@ -7,6 +7,11 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.EventChannel
 
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
+
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.offlinemesh/bluetooth"
     private val EVENT_CHANNEL = "com.offlinemesh/bluetooth/events"
@@ -26,6 +31,8 @@ class MainActivity: FlutterActivity() {
 
     private val MULTICAST_CHANNEL = "com.offlinemesh/wifi_multicast"
     private var multicastLock: WifiManager.MulticastLock? = null
+
+    private val FILE_VIEWER_CHANNEL = "com.offlinemesh/file_viewer"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -73,6 +80,67 @@ class MainActivity: FlutterActivity() {
                         result.success(true)
                     } catch (e: Exception) {
                         result.error("LOCK_ERROR", "Failed to release MulticastLock: ${e.message}", null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        val fileViewerChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILE_VIEWER_CHANNEL)
+        fileViewerChannel.setMethodCallHandler { call, result ->
+            val filePath = call.argument<String>("filePath")
+            val mimeType = call.argument<String>("mimeType") ?: "*/*"
+
+            if (filePath == null) {
+                result.error("INVALID_ARGS", "filePath is required", null)
+                return@setMethodCallHandler
+            }
+
+            val file = File(filePath)
+            if (!file.exists()) {
+                result.error("NOT_FOUND", "File does not exist: $filePath", null)
+                return@setMethodCallHandler
+            }
+
+            when (call.method) {
+                "openFile" -> {
+                    try {
+                        val uri = FileProvider.getUriForFile(
+                            this,
+                            "${applicationContext.packageName}.fileprovider",
+                            file
+                        )
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mimeType)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        val chooser = Intent.createChooser(intent, "Open file with...")
+                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(chooser)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("OPEN_ERROR", "Failed to open file: ${e.message}", null)
+                    }
+                }
+                "shareFile" -> {
+                    try {
+                        val uri = FileProvider.getUriForFile(
+                            this,
+                            "${applicationContext.packageName}.fileprovider",
+                            file
+                        )
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = mimeType
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        val chooser = Intent.createChooser(intent, "Share file via...")
+                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(chooser)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("SHARE_ERROR", "Failed to share file: ${e.message}", null)
                     }
                 }
                 else -> result.notImplemented()

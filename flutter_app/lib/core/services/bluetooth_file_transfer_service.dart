@@ -7,7 +7,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/user.dart';
-import '../models/discovered_peer.dart';
 import '../../features/files/models/file_metadata.dart';
 import 'bluetooth_messaging_service.dart';
 
@@ -136,6 +135,8 @@ class BluetoothFileTransferService {
         createdAt: parsedMetadata.createdAt,
         updatedAt: DateTime.now(),
         localFilePath: finalPath,
+        isEncrypted: parsedMetadata.isEncrypted,
+        encryptedKeyEnvelope: parsedMetadata.encryptedKeyEnvelope,
       );
       
       _incomingFilesController.add(completedMetadata);

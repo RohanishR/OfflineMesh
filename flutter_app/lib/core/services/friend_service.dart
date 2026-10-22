@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../models/user.dart';
 
@@ -16,17 +18,34 @@ class FriendService {
       };
 
   Future<List<UserProfile>> getFriends() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/friends'),
-      headers: _headers,
-    );
+    final prefs = await SharedPreferences.getInstance();
 
-    if (response.statusCode == 200) {
-      Iterable l = jsonDecode(response.body);
-      return List<UserProfile>.from(l.map((model) => UserProfile.fromJson(model)));
-    } else {
-      throw Exception('Failed to load friends');
+    if (jwtToken.isNotEmpty) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/api/friends'),
+          headers: _headers,
+        ).timeout(const Duration(seconds: 4));
+
+        if (response.statusCode == 200) {
+          await prefs.setString('cached_friends_list', response.body);
+          Iterable l = jsonDecode(response.body);
+          return List<UserProfile>.from(l.map((model) => UserProfile.fromJson(model)));
+        }
+      } catch (e) {
+        debugPrint('Could not fetch remote friends ($e). Checking offline cache.');
+      }
     }
+
+    final cached = prefs.getString('cached_friends_list');
+    if (cached != null) {
+      try {
+        Iterable l = jsonDecode(cached);
+        return List<UserProfile>.from(l.map((model) => UserProfile.fromJson(model)));
+      } catch (_) {}
+    }
+
+    return <UserProfile>[];
   }
 
   Future<UserProfile> connect(String offlineMeshId) async {

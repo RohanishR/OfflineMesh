@@ -55,7 +55,9 @@ public class SynchronizationService {
         List<MessageResponse> responseList = messages.stream().map(m -> MessageResponse.builder()
                 .id(m.getId().toString())
                 .senderOfflineMeshId(m.getSender().getOfflineMeshId())
+                .recipientOfflineMeshId(m.getRecipient() != null ? m.getRecipient().getOfflineMeshId() : "")
                 .content(m.getContent())
+                .status(m.getStatus() != null ? m.getStatus().name() : "delivered")
                 .createdAt(m.getCreatedAt() != null ? m.getCreatedAt().toString() : "")
                 .build()
         ).collect(Collectors.toList());

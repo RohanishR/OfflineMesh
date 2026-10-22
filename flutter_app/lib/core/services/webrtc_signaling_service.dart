@@ -16,7 +16,7 @@ class WebRtcSignalingService {
   final _incomingSignalingController = StreamController<WebRtcSignalingMessage>.broadcast();
   Stream<WebRtcSignalingMessage> get incomingSignalingMessages => _incomingSignalingController.stream;
 
-  bool get isConnected => _stompClient?.isActive ?? false;
+  bool get isConnected => _stompClient?.connected ?? false;
 
   WebRtcSignalingService({
     required this.jwtToken,
@@ -63,7 +63,7 @@ class WebRtcSignalingService {
   }
 
   bool sendSignalingMessage(WebRtcSignalingMessage message) {
-    if (_stompClient != null && _stompClient!.isActive) {
+    if (_stompClient != null && _stompClient!.connected) {
       _stompClient!.send(
         destination: '/app/webrtc/signal',
         body: jsonEncode(message.toJson()),

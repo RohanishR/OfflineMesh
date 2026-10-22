@@ -7,5 +7,6 @@ public enum WebRtcSignalingMessageType {
     CALL_REJECT,
     CALL_CANCEL,
     CALL_END,
-    CALL_FAILED
+    CALL_FAILED,
+    CALL_BUSY
 }

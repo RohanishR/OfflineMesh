@@ -8,14 +8,11 @@ import 'package:http/testing.dart';
 
 import 'package:flutter_app/core/security/e2e_encryption_service.dart';
 import 'package:flutter_app/core/security/encrypted_envelope.dart';
-import 'package:flutter_app/core/security/contact_security_model.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('E2eEncryptionService Full Security Test Suite', () {
-    late Map<String, String> secureStorageAlice;
-    late Map<String, String> secureStorageBob;
     late Map<String, dynamic> directoryBackend;
 
     late E2eEncryptionService aliceService;
@@ -23,8 +20,6 @@ void main() {
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
-      secureStorageAlice = {};
-      secureStorageBob = {};
       directoryBackend = {};
 
       // Mock HTTP client simulating backend public key directory

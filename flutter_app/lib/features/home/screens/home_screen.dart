@@ -1,3 +1,5 @@
+import '../../../core/ui/mesh_widgets.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/network/auth_service.dart';
 import '../../../core/services/friend_service.dart';
@@ -42,13 +44,13 @@ class _HomeScreenState extends State<HomeScreen> {
   late UserService _userService;
   late FileService _fileService;
   late E2eEncryptionService _e2eEncryptionService;
-  
+
   late WifiPeerDiscoveryService _discoveryService;
   late BluetoothDiscoveryService _bluetoothDiscoveryService;
-  
+
   late WifiMessagingService _wifiMessagingService;
   late BluetoothMessagingService _bluetoothMessagingService;
-  
+
   late WifiFileTransferService _wifiFileTransferService;
   late BluetoothFileTransferService _bluetoothFileTransferService;
   late BleDiscoveryService _bleDiscoveryService;
@@ -56,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late RoutingService _routingService;
   late WebRtcSignalingService _webrtcSignalingService;
   late CallService _callService;
+  StreamSubscription? _incomingCallSub;
 
   UserProfile? _currentUser;
   bool _isLoadingUser = true;
@@ -65,12 +68,12 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     final jwt = widget.authService.jwtToken ?? '';
     final baseUrl = widget.authService.baseUrl;
-    
+
     _friendService = FriendService(baseUrl: baseUrl, jwtToken: jwt);
     _messageService = MessageService(baseUrl: baseUrl, jwtToken: jwt);
     _userService = UserService(baseUrl: baseUrl, jwtToken: jwt);
     _fileService = FileService(baseUrl: baseUrl, jwtToken: jwt);
-    
+
     _discoveryService = WifiPeerDiscoveryService();
     _bluetoothDiscoveryService = BluetoothDiscoveryService();
 
@@ -98,28 +101,28 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           _currentUser = user;
-          
+
           // Initialize WIFI_LAN services now that we have the current user
           _discoveryService.encryptionService = _e2eEncryptionService;
 
           _wifiMessagingService = WifiMessagingService(currentUser: user);
           _wifiMessagingService.initialize();
-          
+
           _bluetoothMessagingService = BluetoothMessagingService(
             currentUser: user,
             encryptionService: _e2eEncryptionService,
           );
           _bluetoothMessagingService.initialize();
-          
+
           _wifiFileTransferService = WifiFileTransferService(currentUser: user);
           _wifiFileTransferService.initialize();
-          
+
           _bluetoothFileTransferService = BluetoothFileTransferService(
             currentUser: user,
             bluetoothMessagingService: _bluetoothMessagingService,
           );
           _bluetoothFileTransferService.initialize();
-          
+
           _bleDiscoveryService = BleDiscoveryService();
           _bleDiscoveryService.initialize();
 
@@ -128,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
             encryptionService: _e2eEncryptionService,
           );
           _bleMessagingService.initialize();
-          
+
           _routingService = RoutingService(
             messageService: _messageService,
             fileService: _fileService,
@@ -142,22 +145,23 @@ class _HomeScreenState extends State<HomeScreen> {
             encryptionService: _e2eEncryptionService,
           );
           _routingService.initialize();
-          
+
           _webrtcSignalingService = WebRtcSignalingService(
             jwtToken: widget.authService.jwtToken ?? '',
             localOfflineMeshId: user.offlineMeshId,
           );
           _webrtcSignalingService.connect();
-          
+
           _callService = CallService(
             signalingService: _webrtcSignalingService,
             routingService: _routingService,
             localOfflineMeshId: user.offlineMeshId,
           );
           _callService.initialize();
-          
-          _callService.callStateStream.listen((state) {
-            if (state == CallSessionState.RINGING) {
+
+          _incomingCallSub?.cancel();
+          _incomingCallSub = _callService.callStateStream.listen((state) {
+            if (state == CallSessionState.RINGING && mounted) {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => CallScreen(callService: _callService),
@@ -165,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             }
           });
-          
+
           _isLoadingUser = false;
         });
       }
@@ -194,6 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _messageService.dispose();
       _webrtcSignalingService.dispose();
       _callService.dispose();
+      _incomingCallSub?.cancel();
     }
     super.dispose();
   }
@@ -205,43 +210,42 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_currentUser == null) {
-      return const Scaffold(body: Center(child: Text('Failed to load profile. Please relogin.')));
+      return const Scaffold(
+          body: Center(child: Text('Failed to load profile. Please relogin.')));
     }
 
     final screens = [
       ChatListScreen(
-        friendService: _friendService, 
-        messageService: _messageService, // Legacy list screen, could be updated if needed
-        routingService: _routingService, // Passing routing service to ChatListScreen
+        friendService: _friendService,
+        messageService:
+            _messageService, // Legacy list screen, could be updated if needed
+        routingService:
+            _routingService, // Passing routing service to ChatListScreen
         callService: _callService,
       ),
       FriendsListScreen(friendService: _friendService),
       NearbyDevicesScreen(
-        currentUser: _currentUser!, 
+        currentUser: _currentUser!,
         discoveryService: _discoveryService,
         bluetoothDiscoveryService: _bluetoothDiscoveryService,
         bleDiscoveryService: _bleDiscoveryService,
       ),
-      FileListScreen(fileService: _fileService, routingService: _routingService, friendService: _friendService),
+      FileListScreen(
+          fileService: _fileService,
+          routingService: _routingService,
+          friendService: _friendService),
       ProfileScreen(userService: _userService, authService: widget.authService),
     ];
 
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: screens,
+        children: List.generate(screens.length,
+            (i) => TickerMode(enabled: i == _currentIndex, child: screens[i])),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chats'),
-          BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Friends'),
-          BottomNavigationBarItem(icon: Icon(Icons.wifi_tethering), label: 'Nearby'),
-          BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Files'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
+      bottomNavigationBar: GlassNavigationBar(
+        index: _currentIndex,
+        onChanged: (index) => setState(() => _currentIndex = index),
       ),
     );
   }

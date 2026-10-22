@@ -27,22 +27,15 @@ class _SplashScreenState extends State<SplashScreen> {
     if (widget.authService.isAuthenticated) {
       try {
         await widget.authService.me();
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => HomeScreen(authService: widget.authService),
-            ),
-          );
-        }
       } catch (e) {
-        // Token invalid or network error
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => LoginScreen(authService: widget.authService),
-            ),
-          );
-        }
+        debugPrint('Could not reach backend on startup (offline mode): $e');
+      }
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => HomeScreen(authService: widget.authService),
+          ),
+        );
       }
     } else {
       Navigator.of(context).pushReplacement(

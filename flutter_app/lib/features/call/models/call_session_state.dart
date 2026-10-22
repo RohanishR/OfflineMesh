@@ -10,4 +10,5 @@ enum CallSessionState {
   CANCELLED,
   ENDED,
   FAILED,
+  BUSY,
 }

@@ -3,9 +3,15 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../config/app_config.dart';
+
 class WebRtcCallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
+  bool _remoteDescriptionReady = false;
+  final List<Map<String, dynamic>> _pendingCandidates = [];
+  MediaStream? get localStream => _localStream;
+  final List<Map<String, dynamic>>? customIceServers;
 
   final void Function(String sdp)? onLocalSdpGenerated;
   final void Function(String iceCandidate)? onLocalIceCandidateGenerated;
@@ -14,6 +20,7 @@ class WebRtcCallService {
   final void Function(MediaStream stream)? onRemoteStreamAdded;
 
   WebRtcCallService({
+    this.customIceServers,
     this.onLocalSdpGenerated,
     this.onLocalIceCandidateGenerated,
     this.onIceConnectionState,
@@ -24,15 +31,8 @@ class WebRtcCallService {
   /// The STUN/TURN configuration
   Map<String, dynamic> _getIceServers() {
     return {
-      'iceServers': [
-        {
-          'urls': [
-            'stun:stun.l.google.com:19302',
-            'stun:stun1.l.google.com:19302'
-          ]
-        },
-        // Placeholder for TURN configuration in the future
-      ]
+      'iceServers': customIceServers ?? AppConfig.defaultIceServers,
+      'sdpSemantics': 'unified-plan',
     };
   }
 
@@ -53,6 +53,13 @@ class WebRtcCallService {
       }
     };
 
+    _peerConnection!.onTrack = (RTCTrackEvent event) {
+      debugPrint('Remote track added: ${event.track.kind}');
+      if (event.streams.isNotEmpty && onRemoteStreamAdded != null) {
+        onRemoteStreamAdded!(event.streams[0]);
+      }
+    };
+
     _peerConnection!.onAddStream = (MediaStream stream) {
       debugPrint('Remote stream added. Audio tracks: ${stream.getAudioTracks().length}, Video tracks: ${stream.getVideoTracks().length}');
       if (onRemoteStreamAdded != null) {
@@ -63,7 +70,9 @@ class WebRtcCallService {
     final actualIsVideo = await _captureLocalMedia(isVideoCall: isVideoCall);
     
     if (_localStream != null) {
-      await _peerConnection!.addStream(_localStream!);
+      for (final track in _localStream!.getTracks()) {
+        await _peerConnection!.addTrack(track, _localStream!);
+      }
     }
 
     if (isCaller) {
@@ -77,13 +86,10 @@ class WebRtcCallService {
     final Map<String, dynamic> mediaConstraints = {
       'audio': true,
       'video': isVideoCall ? {
-        'mandatory': {
-          'minWidth': '640', 
-          'minHeight': '480',
-          'minFrameRate': '30',
-        },
         'facingMode': 'user',
-        'optional': [],
+        'width': {'ideal': 640},
+        'height': {'ideal': 480},
+        'frameRate': {'ideal': 30},
       } : false,
     };
 
@@ -153,13 +159,22 @@ class WebRtcCallService {
       final String sdp = sdpMap['sdp'] as String;
       final RTCSessionDescription description = RTCSessionDescription(sdp, type);
       await _peerConnection!.setRemoteDescription(description);
+      _remoteDescriptionReady = true;
+      final pending = List<Map<String, dynamic>>.from(_pendingCandidates);
+      _pendingCandidates.clear();
+      for (final candidate in pending) {
+        await addIceCandidate(candidate);
+      }
     } catch (e) {
       debugPrint('Failed to set remote description: $e');
     }
   }
 
   Future<void> addIceCandidate(Map<String, dynamic> candidateMap) async {
-    if (_peerConnection == null) return;
+    if (!_remoteDescriptionReady || _peerConnection == null) {
+      _pendingCandidates.add(candidateMap);
+      return;
+    }
     try {
       final String? candidate = candidateMap['candidate'];
       final String? sdpMid = candidateMap['sdpMid'];
@@ -193,6 +208,14 @@ class WebRtcCallService {
     final videoTracks = _localStream!.getVideoTracks();
     if (videoTracks.isNotEmpty) {
       await Helper.switchCamera(videoTracks[0]);
+    }
+  }
+
+  Future<void> setSpeakerphone(bool enable) async {
+    try {
+      await Helper.setSpeakerphoneOn(enable);
+    } catch (e) {
+      debugPrint('Failed to set speakerphone: $e');
     }
   }
 

@@ -42,7 +42,12 @@ class WifiPeerDiscoveryService {
     }
     
     try {
-      _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
+      _socket = await RawDatagramSocket.bind(
+        InternetAddress.anyIPv4, 
+        _discoveryPort,
+        reuseAddress: true,
+        reusePort: true,
+      );
       _socket!.broadcastEnabled = true;
       _isDiscovering = true;
 
@@ -93,14 +98,19 @@ class WifiPeerDiscoveryService {
     }
   }
 
-  void _broadcastPresence(UserProfile currentUser) {
+  List<String> _activeIps = [];
+  List<String> get activeIps => List.unmodifiable(_activeIps);
+  bool get hasLocalWifiOrHotspot => _activeIps.any((ip) =>
+      ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.'));
+
+  Future<void> _broadcastPresence(UserProfile currentUser) async {
     if (_socket == null) return;
     
     final payload = <String, dynamic>{
       'offlineMeshId': currentUser.offlineMeshId,
       'displayName': currentUser.username,
       'deviceId': currentUser.offlineMeshId,
-      'port': _discoveryPort,
+      'port': 45455,
       'protocolVersion': 1,
     };
 
@@ -115,10 +125,45 @@ class WifiPeerDiscoveryService {
     
     final data = utf8.encode(jsonEncode(payload));
     
+    // 1. Send to global broadcast address
     try {
-      _socket!.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
+      _socket?.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
     } catch (e) {
-      debugPrint('Error sending UDP broadcast: $e');
+      debugPrint('Error sending UDP global broadcast: $e');
+    }
+
+    // 2. Send to specific subnet broadcast address for each active network interface
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      final currentIps = <String>[];
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          currentIps.add(addr.address);
+          final parts = addr.address.split('.');
+          if (parts.length == 4) {
+            final subnetBroadcast = '${parts[0]}.${parts[1]}.${parts[2]}.255';
+            try {
+              _socket?.send(data, InternetAddress(subnetBroadcast), _discoveryPort);
+            } catch (_) {}
+          }
+        }
+      }
+      _activeIps = currentIps;
+
+      // 3. Android Hotspot special handling: If client is connected to hotspot (192.168.43.x),
+      // also ping the hotspot host gateway directly at 192.168.43.1 in case router drops broadcast.
+      for (final ip in currentIps) {
+        if (ip.startsWith('192.168.43.') && ip != '192.168.43.1') {
+          try {
+            _socket?.send(data, InternetAddress('192.168.43.1'), _discoveryPort);
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('Error sending subnet broadcast: $e');
     }
   }
 

@@ -47,6 +47,10 @@ class WebSocketJwtChannelInterceptorTest {
     void testPreSend_ConnectWithValidJwt_SetsUser() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
         accessor.addNativeHeader("Authorization", "Bearer valid-token");
+        accessor.setLeaveMutable(true);
+        java.util.concurrent.atomic.AtomicReference<java.security.Principal> sessionUser =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        accessor.setUserChangeCallback(sessionUser::set);
         Message<?> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
 
         when(jwtService.validateToken("valid-token")).thenReturn(true);
@@ -54,7 +58,9 @@ class WebSocketJwtChannelInterceptorTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         Message<?> result = interceptor.preSend(message, null);
-        assertNotNull(result);
+        assertSame(message, result);
+        assertNotNull(sessionUser.get(), "Spring must receive the session authentication callback");
+        assertEquals("OM-TEST", sessionUser.get().getName());
 
         StompHeaderAccessor resultAccessor = StompHeaderAccessor.getAccessor(result, StompHeaderAccessor.class);
         assertNotNull(resultAccessor.getUser());

@@ -7,7 +7,6 @@ import 'internet_file_transfer_transport.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import '../../../core/security/e2e_encryption_service.dart';
-import '../../../core/security/encrypted_envelope.dart';
 
 class FileService {
   final String baseUrl;

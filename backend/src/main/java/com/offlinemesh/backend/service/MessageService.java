@@ -75,7 +75,9 @@ public class MessageService {
         return MessageResponse.builder()
                 .id(message.getId().toString())
                 .senderOfflineMeshId(message.getSender().getOfflineMeshId())
+                .recipientOfflineMeshId(message.getRecipient() != null ? message.getRecipient().getOfflineMeshId() : targetUser.getOfflineMeshId())
                 .content(message.getContent())
+                .status(message.getStatus() != null ? message.getStatus().name() : "sent")
                 .createdAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : java.time.Instant.now().toString())
                 .build();
     }
@@ -98,7 +100,9 @@ public class MessageService {
         List<MessageResponse> responseList = messages.stream().map(m -> MessageResponse.builder()
                 .id(m.getId().toString())
                 .senderOfflineMeshId(m.getSender().getOfflineMeshId())
+                .recipientOfflineMeshId(m.getRecipient() != null ? m.getRecipient().getOfflineMeshId() : "")
                 .content(m.getContent())
+                .status(m.getStatus() != null ? m.getStatus().name() : "sent")
                 .createdAt(m.getCreatedAt() != null ? m.getCreatedAt().toString() : "")
                 .build()
         ).collect(Collectors.toList());
@@ -159,7 +163,9 @@ public class MessageService {
                 return MessageResponse.builder()
                         .id(m.getId().toString())
                         .senderOfflineMeshId(m.getSender().getOfflineMeshId())
+                        .recipientOfflineMeshId(m.getRecipient() != null ? m.getRecipient().getOfflineMeshId() : "")
                         .content(m.getContent())
+                        .status(m.getStatus() != null ? m.getStatus().name() : "sent")
                         .createdAt(m.getCreatedAt() != null ? m.getCreatedAt().toString() : java.time.Instant.now().toString())
                         .build();
             }
@@ -199,7 +205,9 @@ public class MessageService {
         return MessageResponse.builder()
                 .id(message.getId().toString())
                 .senderOfflineMeshId(message.getSender().getOfflineMeshId())
+                .recipientOfflineMeshId(message.getRecipient() != null ? message.getRecipient().getOfflineMeshId() : targetUser.getOfflineMeshId())
                 .content(message.getContent())
+                .status(message.getStatus() != null ? message.getStatus().name() : "sent")
                 .createdAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : java.time.Instant.now().toString())
                 .build();
     }

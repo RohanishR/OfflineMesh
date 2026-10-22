@@ -50,10 +50,10 @@ public class WebSocketJwtChannelInterceptor implements ChannelInterceptor {
                                 principal, null, Collections.emptyList()
                         );
                         
-                        // Set the Principal on a mutable accessor.
-                        StompHeaderAccessor mutableAccessor = StompHeaderAccessor.wrap(message);
-                        mutableAccessor.setUser(authentication);
-                        return org.springframework.messaging.support.MessageBuilder.createMessage(message.getPayload(), mutableAccessor.getMessageHeaders());
+                        // Keep Spring's original accessor: its user-change callback
+                        // persists this authentication for subsequent frames.
+                        accessor.setUser(authentication);
+                        return message;
                     } else {
                         log.warn("Invalid JWT presented during STOMP connection.");
                         throw new IllegalArgumentException("Invalid JWT token");

@@ -29,5 +29,29 @@ void main() {
       expect(outJson['createdAt'], '2023-01-01T10:00:00.000Z');
       expect(outJson['updatedAt'], null);
     });
+
+    test('fromJson handles null createdAt and missing properties safely without throwing', () {
+      final json = <String, dynamic>{
+        'id': 'b1c67e89-1234-4a8b-90f6-ab1234567890',
+        'senderOfflineMeshId': 'SENDER123',
+        'recipientOfflineMeshId': 'RECIPIENT123',
+        'originalFileName': null,
+        'contentType': null,
+        'fileSize': null,
+        'checksum': null,
+        'status': null,
+        'createdAt': null, // Specifically tests against "type 'Null' is not a subtype of type 'String'"
+        'updatedAt': null,
+      };
+
+      final metadata = FileMetadata.fromJson(json);
+
+      expect(metadata.id, 'b1c67e89-1234-4a8b-90f6-ab1234567890');
+      expect(metadata.originalFileName, 'unknown_file');
+      expect(metadata.contentType, 'application/octet-stream');
+      expect(metadata.fileSize, 0);
+      expect(metadata.status, 'COMPLETED');
+      expect(metadata.createdAt, isNotNull);
+    });
   });
 }

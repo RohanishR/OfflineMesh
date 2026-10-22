@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,11 +7,23 @@ import '../config/app_config.dart';
 /// Handles authentication against the OfflineMesh backend.
 /// Stores the JWT token in SharedPreferences for session persistence.
 class AuthService {
-  final String baseUrl;
+  String baseUrl;
+
+  static String errorMessage(Object error) {
+    if (error is TimeoutException || error is http.ClientException) {
+      return 'Cannot reach the server. Open Server settings and test the PC address for your current Wi-Fi or hotspot. Check that Docker is running on port 8081.';
+    }
+    return error.toString().replaceFirst('Exception: ', '');
+  }
 
   String? _jwtToken;
 
-  AuthService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.backendBaseUrl;
+  AuthService({String? baseUrl})
+      : baseUrl = baseUrl ?? AppConfig.backendBaseUrl;
+
+  void updateBaseUrl(String newUrl) {
+    baseUrl = newUrl;
+  }
 
   /// The current JWT token, or null if not authenticated.
   String? get jwtToken => _jwtToken;
@@ -41,20 +54,23 @@ class AuthService {
     required String password,
     String? email,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/auth/register'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': username,
-        'password': password,
-        if (email != null) 'email': email,
-      }),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/register'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'username': username,
+            'password': password,
+            if (email != null) 'email': email,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
-      throw Exception('Registration failed (${response.statusCode}): ${response.body}');
+      throw Exception(
+          'Registration failed (${response.statusCode}): ${response.body}');
     }
   }
 
@@ -63,23 +79,27 @@ class AuthService {
     required String username,
     required String password,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username, 'password': password}),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       // Accept both common JWT response field names.
       final token = body['token'] as String? ?? body['accessToken'] as String?;
       if (token == null) {
-        throw Exception('Login succeeded but no token found in response: $body');
+        throw Exception(
+            'Login succeeded but no token found in response: $body');
       }
       await _saveToken(token);
       return token;
     } else {
-      throw Exception('Login failed (${response.statusCode}): ${response.body}');
+      throw Exception(
+          'Login failed (${response.statusCode}): ${response.body}');
     }
   }
 
@@ -87,15 +107,18 @@ class AuthService {
   Future<Map<String, dynamic>> me() async {
     if (_jwtToken == null) throw Exception('Not authenticated');
 
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/auth/me'),
-      headers: _authHeaders,
-    );
+    final response = await http
+        .get(
+          Uri.parse('$baseUrl/api/auth/me'),
+          headers: _authHeaders,
+        )
+        .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
-      throw Exception('GET /api/auth/me failed (${response.statusCode}): ${response.body}');
+      throw Exception(
+          'GET /api/auth/me failed (${response.statusCode}): ${response.body}');
     }
   }
 

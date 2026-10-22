@@ -10,19 +10,27 @@ import 'routing_service.dart';
 import '../../core/transport/transport_type.dart';
 import '../../features/call/models/webrtc_signaling_message.dart';
 import '../../features/call/models/call_session_state.dart';
+import '../config/app_config.dart';
 
 class CallService {
   final WebRtcSignalingService signalingService;
   final RoutingService routingService;
   final String localOfflineMeshId;
+  final List<Map<String, dynamic>>? customIceServers;
 
   WebRtcCallService? _webRtcCallService;
+  MediaStream? localStream;
+  MediaStream? remoteStream;
+  bool _disposed = false;
   bool _isVideoCall = false;
   bool _isLocalWifiCall = false;
 
   CallSessionState _currentState = CallSessionState.IDLE;
   String? _currentSessionId;
   String? _remoteOfflineMeshId;
+
+  Timer? _callTimeoutTimer;
+  Timer? _reconnectTimeoutTimer;
 
   // Buffer ICE candidates that arrive before the peer connection is ready to process them
   final List<String> _iceCandidateBuffer = [];
@@ -50,18 +58,18 @@ class CallService {
     required this.signalingService,
     required this.routingService,
     required this.localOfflineMeshId,
+    this.customIceServers,
   });
 
   void initialize() {
     _signalingSubscription = signalingService.incomingSignalingMessages.listen(_handleIncomingSignal);
     _wifiSignalingSubscription = routingService.wifiMessagingService.incomingSignalingMessages.listen((message) {
-      _isLocalWifiCall = true;
-      _handleIncomingSignal(message);
+      _handleIncomingSignal(message, localWifi: true);
     });
   }
 
   void _setState(CallSessionState state) {
-    if (_currentState == state) return;
+    if (_disposed || _currentState == state) return;
     _currentState = state;
     _callStateController.add(state);
     debugPrint('CallService state changed to: ${state.name}');
@@ -72,11 +80,14 @@ class CallService {
   bool get isVideoCall => _isVideoCall;
   bool get isLocalWifiCall => _isLocalWifiCall;
 
-  void _handleIncomingSignal(WebRtcSignalingMessage message) {
+  void _handleIncomingSignal(WebRtcSignalingMessage message, {bool localWifi = false}) {
+    if (_disposed || message.recipientOfflineMeshId != localOfflineMeshId) return;
+    if (_currentSessionId == message.sessionId && _remoteOfflineMeshId != null &&
+        message.senderOfflineMeshId != _remoteOfflineMeshId) return;
     if (_currentSessionId != null && message.sessionId != _currentSessionId) {
       if (message.type == 'CALL_OFFER') {
         _sendSignal(
-          type: 'CALL_REJECT',
+          type: 'CALL_BUSY',
           recipientId: message.senderOfflineMeshId,
           sessionId: message.sessionId,
         );
@@ -93,7 +104,7 @@ class CallService {
           _iceCandidateBuffer.clear();
           _incomingOfferSdp = message.sdp;
           _isVideoCall = message.sdp?.contains('m=video') ?? false;
-          _isLocalWifiCall = routingService.isPeerNearby(_remoteOfflineMeshId!);
+          _isLocalWifiCall = localWifi;
           _setState(CallSessionState.RINGING);
         }
         break;
@@ -134,6 +145,12 @@ class CallService {
         _setState(CallSessionState.REJECTED);
         _resetToIdleAfterDelay();
         break;
+
+      case 'CALL_BUSY':
+        _cleanupCall();
+        _setState(CallSessionState.BUSY);
+        _resetToIdleAfterDelay();
+        break;
         
       case 'CALL_CANCEL':
         _cleanupCall();
@@ -160,7 +177,8 @@ class CallService {
       if (_currentState == CallSessionState.ENDED || 
           _currentState == CallSessionState.REJECTED || 
           _currentState == CallSessionState.CANCELLED || 
-          _currentState == CallSessionState.FAILED) {
+          _currentState == CallSessionState.FAILED ||
+          _currentState == CallSessionState.BUSY) {
         _setState(CallSessionState.IDLE);
       }
     });
@@ -179,8 +197,15 @@ class CallService {
   }
 
   Future<void> _initWebRtcCallService({required bool isCaller}) async {
+    // When operating completely offline on local Wi-Fi, omit external STUN servers to avoid DNS timeouts
+    final iceServersToUse = (_isLocalWifiCall && !signalingService.isConnected)
+        ? <Map<String, dynamic>>[]
+        : (customIceServers ?? AppConfig.defaultIceServers);
+
     _webRtcCallService = WebRtcCallService(
+      customIceServers: iceServersToUse,
       onLocalSdpGenerated: (sdpStr) {
+        if (_disposed || _currentSessionId == null || _remoteOfflineMeshId == null) return;
         // Send the offer or answer
         if (isCaller) {
           _sendSignal(
@@ -199,6 +224,7 @@ class CallService {
         }
       },
       onLocalIceCandidateGenerated: (candidateStr) {
+        if (_disposed || _currentSessionId == null || _remoteOfflineMeshId == null) return;
         _sendSignal(
           type: 'ICE_CANDIDATE',
           recipientId: _remoteOfflineMeshId!,
@@ -207,19 +233,43 @@ class CallService {
         );
       },
       onIceConnectionState: (state) {
-        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
+        if (_disposed || _currentSessionId == null) return;
+        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+            state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+          _callTimeoutTimer?.cancel();
+          _callTimeoutTimer = null;
+          _reconnectTimeoutTimer?.cancel();
+          _reconnectTimeoutTimer = null;
           _setState(CallSessionState.CONNECTED);
         } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
           _setState(CallSessionState.RECONNECTING);
+
+          // If Internet dropped during call but peer is nearby on Wi-Fi, fall back to local Wi-Fi signaling
+          if (!_isLocalWifiCall && _remoteOfflineMeshId != null && routingService.isPeerNearby(_remoteOfflineMeshId!)) {
+            debugPrint('Internet call disconnected; falling back to local Wi-Fi direct calling.');
+            _isLocalWifiCall = true;
+          }
+
+          _reconnectTimeoutTimer?.cancel();
+          _reconnectTimeoutTimer = Timer(const Duration(seconds: 15), () {
+            if (_currentState == CallSessionState.RECONNECTING) {
+              debugPrint('Reconnection timed out. Ending call.');
+              endCall();
+            }
+          });
         } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
                    state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
           endCall();
         }
       },
       onLocalStreamAdded: (stream) {
+        if (_disposed || _currentSessionId == null) return;
+        localStream = stream;
         _localStreamController.add(stream);
       },
       onRemoteStreamAdded: (stream) {
+        if (_disposed || _currentSessionId == null) return;
+        remoteStream = stream;
         _remoteStreamController.add(stream);
       },
     );
@@ -272,6 +322,16 @@ class CallService {
     _isLocalWifiCall = routes.contains(TransportType.WIFI_LAN);
     
     _setState(CallSessionState.CALLING);
+
+    // Call timeout: if not answered within 30 seconds, cancel call
+    _callTimeoutTimer?.cancel();
+    _callTimeoutTimer = Timer(const Duration(seconds: 30), () {
+      if (_currentState == CallSessionState.CALLING || _currentState == CallSessionState.NEGOTIATING) {
+        debugPrint('Call offer timed out waiting for answer.');
+        endCall();
+      }
+    });
+
     _initWebRtcCallService(isCaller: true);
   }
 
@@ -340,6 +400,10 @@ class CallService {
     _webRtcCallService?.switchCamera();
   }
 
+  void setSpeakerphone(bool enable) {
+    _webRtcCallService?.setSpeakerphone(enable);
+  }
+
   void _sendSignal({
     required String type,
     required String recipientId,
@@ -374,12 +438,19 @@ class CallService {
   }
 
   Future<void> _cleanupCall() async {
+    _callTimeoutTimer?.cancel();
+    _callTimeoutTimer = null;
+    _reconnectTimeoutTimer?.cancel();
+    _reconnectTimeoutTimer = null;
+
     _currentSessionId = null;
     _remoteOfflineMeshId = null;
     _remotePeerController.add(null);
     _incomingOfferSdp = null;
     _iceCandidateBuffer.clear();
     
+    localStream = null;
+    remoteStream = null;
     _localStreamController.add(null);
     _remoteStreamController.add(null);
     _isVideoCall = false;
@@ -392,6 +463,7 @@ class CallService {
   }
 
   void dispose() {
+    _disposed = true;
     _cleanupCall();
     _signalingSubscription?.cancel();
     _wifiSignalingSubscription?.cancel();

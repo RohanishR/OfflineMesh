@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -45,6 +46,7 @@ class RoutingService {
 
   List<DiscoveredPeer> _activePeers = [];
   List<BleDiscoveredDevice> _activeBlePeers = [];
+  List<BleDiscoveredDevice> get activeBlePeers => List.unmodifiable(_activeBlePeers);
   
   StreamSubscription? _peersSubscription;
   StreamSubscription? _blePeersSubscription;
@@ -58,6 +60,7 @@ class RoutingService {
 
   final List<FileMetadata> _localSentFiles = [];
   final List<FileMetadata> _localReceivedFiles = [];
+  final Set<String> _recentlyDeliveredMessageIds = {};
 
   RoutingService({
     required this.messageService,
@@ -132,21 +135,96 @@ class RoutingService {
   Future<void> _deliverIncomingMessage(Message message, TransportType transport) async {
     message.transport = transport;
 
-    if (EncryptedEnvelope.isEncryptedEnvelope(message.content)) {
-      if (encryptionService != null) {
-        try {
-          final decryptedContent = await encryptionService!.decryptMessage(message.content);
-          message = message.copyWith(content: decryptedContent);
-        } catch (e) {
-          debugPrint('Decryption failed for incoming message: $e');
-          message = message.copyWith(content: 'Unable to decrypt message.');
-        }
-      } else {
-        message = message.copyWith(content: 'Unable to decrypt message.');
-      }
+    final myOfflineMeshId = wifiMessagingService.currentUser.offlineMeshId;
+
+    // 1. Loopback prevention: Ignore messages sent by ourselves
+    if (message.senderOfflineMeshId == myOfflineMeshId) {
+      debugPrint('Dropping loopback message from myself: ${message.id}');
+      return;
     }
 
-    // Persist incoming message locally for offline access
+    // 2. Deduplicate incoming messages across transports
+    if (_recentlyDeliveredMessageIds.contains(message.id)) {
+      debugPrint('Dropping already delivered duplicate message: ${message.id}');
+      return;
+    }
+    _recentlyDeliveredMessageIds.add(message.id);
+    if (_recentlyDeliveredMessageIds.length > 500) {
+      _recentlyDeliveredMessageIds.remove(_recentlyDeliveredMessageIds.first);
+    }
+
+    // 3. Encrypted envelope handling
+    if (EncryptedEnvelope.isEncryptedEnvelope(message.content)) {
+      try {
+        final envelope = EncryptedEnvelope.fromJson(jsonDecode(message.content));
+
+        // Strict confidentiality: If envelope has a recipient specified and it is NOT me, DROP!
+        if (envelope.recipientId.isNotEmpty && envelope.recipientId != myOfflineMeshId) {
+          debugPrint('Confidentiality drop: Encrypted envelope recipient ${envelope.recipientId} != my ID ($myOfflineMeshId)');
+          return;
+        }
+
+        if (encryptionService != null) {
+          final decryptedContent = await encryptionService!.decryptMessage(envelope);
+          message = message.copyWith(
+            content: decryptedContent,
+            recipientOfflineMeshId: myOfflineMeshId,
+          );
+        } else {
+          debugPrint('Cannot decrypt E2EE message without encryptionService; dropping message');
+          return;
+        }
+      } catch (e) {
+        debugPrint('Decryption or recipient mismatch error, dropping message: $e');
+        return; // NEVER persist 'Unable to decrypt message' or leaked packets!
+      }
+    } else {
+      // 4. Plaintext message recipient validation
+      if (message.recipientOfflineMeshId != null &&
+          message.recipientOfflineMeshId!.isNotEmpty &&
+          message.recipientOfflineMeshId != myOfflineMeshId) {
+        debugPrint('Confidentiality drop: Plaintext message recipient ${message.recipientOfflineMeshId} != my ID ($myOfflineMeshId)');
+        return;
+      }
+      message = message.copyWith(
+        recipientOfflineMeshId: message.recipientOfflineMeshId ?? myOfflineMeshId,
+      );
+    }
+
+    // 5. Intercept WhatsApp emoji reactions
+    try {
+      final trimmed = message.content.trim();
+      if (trimmed.startsWith('{"type":"REACTION"') || trimmed.startsWith('{"type": "REACTION"')) {
+        final data = jsonDecode(trimmed) as Map<String, dynamic>;
+        if (data['type'] == 'REACTION') {
+          final targetId = data['targetMessageId']?.toString();
+          final emoji = data['emoji']?.toString();
+          final senderId = data['senderId']?.toString() ?? message.senderOfflineMeshId;
+          if (targetId != null && emoji != null) {
+            final conversationPeer = message.senderOfflineMeshId;
+            final msgs = await localStorageService.loadConversation(conversationPeer);
+            final idx = msgs.indexWhere((m) => m.id == targetId);
+            if (idx != -1) {
+              final targetMsg = msgs[idx];
+              final currentReactions = Map<String, String>.from(targetMsg.reactions ?? {});
+              if (currentReactions[senderId] == emoji) {
+                currentReactions.remove(senderId);
+              } else {
+                currentReactions[senderId] = emoji;
+              }
+              final updated = targetMsg.copyWith(reactions: currentReactions);
+              await localStorageService.saveMessage(conversationPeer, updated);
+              _incomingMessagesController.add(updated);
+              return; // Handled as reaction update; do not create duplicate text bubble
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Reaction parsing note: $e');
+    }
+
+    // 6. Persist incoming message locally for offline access
     await localStorageService.saveMessage(message.senderOfflineMeshId, message);
     _incomingMessagesController.add(message);
   }
@@ -205,7 +283,7 @@ class RoutingService {
       final peer = _activePeers.firstWhere((p) => p.offlineMeshId == offlineMeshId);
       return peer.isReachable;
     } catch (e) {
-      return false;
+      return wifiMessagingService.getKnownIpForPeer(offlineMeshId) != null;
     }
   }
 
@@ -213,6 +291,20 @@ class RoutingService {
     try {
       return _activePeers.firstWhere((p) => p.offlineMeshId == offlineMeshId && p.isReachable);
     } catch (e) {
+      final cachedIp = wifiMessagingService.getKnownIpForPeer(offlineMeshId);
+      if (cachedIp != null) {
+        final now = DateTime.now();
+        return DiscoveredPeer(
+          offlineMeshId: offlineMeshId,
+          displayName: offlineMeshId,
+          deviceId: offlineMeshId,
+          ipAddress: cachedIp,
+          port: 45455,
+          discoveryTimestamp: now,
+          lastSeenTimestamp: now,
+          isReachable: true,
+        );
+      }
       return null;
     }
   }
@@ -244,21 +336,35 @@ class RoutingService {
       }
     }
 
-    // 4. INTERNET
-    routes.add(TransportType.INTERNET);
+    // 4. INTERNET (Only route if authenticated with valid token)
+    if (messageService.jwtToken.isNotEmpty) {
+      routes.add(TransportType.INTERNET);
+    }
     
     return routes;
   }
 
-  Future<Message> sendMessage(String recipientOfflineMeshId, String content) async {
+  Future<Message> sendMessage(
+    String recipientOfflineMeshId,
+    String content, {
+    String? replyToId,
+    String? replyToContent,
+    String? replyToSender,
+    String mediaType = 'text',
+  }) async {
     final messageId = DateTime.now().millisecondsSinceEpoch.toString();
 
     final localMessage = Message(
       id: messageId,
       senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+      recipientOfflineMeshId: recipientOfflineMeshId,
       content: content,
       createdAt: DateTime.now(),
       status: 'sending',
+      replyToId: replyToId,
+      replyToContent: replyToContent,
+      replyToSender: replyToSender,
+      mediaType: mediaType,
     );
 
     String wireContent = content;
@@ -279,9 +385,14 @@ class RoutingService {
     final wireMessage = Message(
       id: messageId,
       senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+      recipientOfflineMeshId: recipientOfflineMeshId,
       content: wireContent,
       createdAt: localMessage.createdAt,
       status: 'sending',
+      replyToId: replyToId,
+      replyToContent: replyToContent,
+      replyToSender: replyToSender,
+      mediaType: mediaType,
     );
 
     // Save initial sending state locally
@@ -307,12 +418,16 @@ class RoutingService {
             break;
           case TransportType.INTERNET:
             final backendMsg = await messageService.sendMessage(recipientOfflineMeshId, wireContent);
+            if (encryptionService != null) {
+              await encryptionService!.cacheSentMessage(backendMsg.id, content);
+            }
             final deliveredMsg = localMessage.copyWith(
               id: backendMsg.id,
               createdAt: backendMsg.createdAt,
               status: 'sent',
               transport: TransportType.INTERNET,
             );
+            await localStorageService.removeMessage(recipientOfflineMeshId, localMessage.id);
             await localStorageService.saveMessage(recipientOfflineMeshId, deliveredMsg);
             return deliveredMsg;
         }
@@ -352,6 +467,41 @@ class RoutingService {
     return localMessage;
   }
 
+  Future<void> sendReaction({
+    required String peerOfflineMeshId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    final myId = wifiMessagingService.currentUser.offlineMeshId;
+    final messages = await localStorageService.loadConversation(peerOfflineMeshId);
+    final targetIndex = messages.indexWhere((m) => m.id == messageId);
+    if (targetIndex != -1) {
+      final msg = messages[targetIndex];
+      final currentReactions = Map<String, String>.from(msg.reactions ?? {});
+      if (currentReactions[myId] == emoji) {
+        currentReactions.remove(myId);
+      } else {
+        currentReactions[myId] = emoji;
+      }
+      final updated = msg.copyWith(reactions: currentReactions);
+      await localStorageService.saveMessage(peerOfflineMeshId, updated);
+      _incomingMessagesController.add(updated);
+
+      // Transmit reaction signal across mesh
+      try {
+        final reactionJson = jsonEncode({
+          'type': 'REACTION',
+          'targetMessageId': messageId,
+          'emoji': emoji,
+          'senderId': myId,
+        });
+        await sendMessage(peerOfflineMeshId, reactionJson);
+      } catch (e) {
+        debugPrint('Could not transmit reaction over wire: $e');
+      }
+    }
+  }
+
   bool _isFlushingOutbox = false;
   Future<void> flushOutbox() async {
     if (_isFlushingOutbox) return;
@@ -377,6 +527,7 @@ class RoutingService {
         );
 
         bool sent = false;
+        Message? serverMessage;
         for (final transport in routes) {
           try {
             wireMessage.transport = transport;
@@ -395,13 +546,19 @@ class RoutingService {
                 sent = true;
                 break;
               case TransportType.INTERNET:
-                await messageService.sendMessage(recipientId, wireContent);
+                serverMessage = await messageService.sendMessage(recipientId, wireContent);
                 sent = true;
                 break;
             }
             if (sent) {
               await localStorageService.removeFromOutbox(messageId);
-              final updated = Message.fromJson(rawMsg).copyWith(status: 'sent', transport: transport);
+              final updated = Message.fromJson(rawMsg).copyWith(
+                id: serverMessage?.id, createdAt: serverMessage?.createdAt,
+                status: 'sent', transport: transport);
+              if (serverMessage != null) {
+                await encryptionService?.cacheSentMessage(serverMessage.id, updated.content);
+                await localStorageService.removeMessage(recipientId, messageId);
+              }
               await localStorageService.saveMessage(recipientId, updated);
               _incomingMessagesController.add(updated);
               debugPrint('Successfully flushed queued message $messageId via $transport');
@@ -445,8 +602,9 @@ class RoutingService {
         isEncrypted = true;
         encryptedKeyEnvelope = encResult.encryptedKeyEnvelope;
       } catch (e) {
-        debugPrint('E2EE file encryption failed: $e');
-        rethrow;
+        debugPrint('E2EE file encryption unavailable for $recipientOfflineMeshId ($e). Sending unencrypted.');
+        isEncrypted = false;
+        fileToSend = file;
       }
     }
 
@@ -540,7 +698,18 @@ class RoutingService {
       debugPrint('Failed to get backend sent files: $e');
     }
     
-    final allFiles = [...apiFiles, ..._localSentFiles];
+    final Map<String, FileMetadata> fileMap = {};
+    for (final f in _localSentFiles) {
+      fileMap[f.id] = f;
+    }
+    for (final f in apiFiles) {
+      if (fileMap.containsKey(f.id) && fileMap[f.id]?.localFilePath != null) {
+        f.localFilePath = fileMap[f.id]!.localFilePath;
+      }
+      fileMap[f.id] = f;
+    }
+    
+    final allFiles = fileMap.values.toList();
     allFiles.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return allFiles;
   }
@@ -553,7 +722,18 @@ class RoutingService {
       debugPrint('Failed to get backend received files: $e');
     }
     
-    final allFiles = [...apiFiles, ..._localReceivedFiles];
+    final Map<String, FileMetadata> fileMap = {};
+    for (final f in _localReceivedFiles) {
+      fileMap[f.id] = f;
+    }
+    for (final f in apiFiles) {
+      if (fileMap.containsKey(f.id) && fileMap[f.id]?.localFilePath != null) {
+        f.localFilePath = fileMap[f.id]!.localFilePath;
+      }
+      fileMap[f.id] = f;
+    }
+    
+    final allFiles = fileMap.values.toList();
     allFiles.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return allFiles;
   }

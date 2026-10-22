@@ -95,6 +95,24 @@ class BluetoothDiscoveryService {
     }
 
     _devices.clear();
+
+    // 1. Instantly populate already paired / bonded devices
+    try {
+      final bonded = await FlutterBluetoothSerial.instance.getBondedDevices();
+      for (final device in bonded) {
+        if (device.address.isNotEmpty) {
+          final name = (device.name != null && device.name!.isNotEmpty) ? '${device.name} (Paired)' : 'Paired Device';
+          _devices[device.address] = BluetoothDiscoveredDevice(
+            address: device.address,
+            name: name,
+            discoveryTime: DateTime.now(),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error getting bonded devices: $e');
+    }
+
     _devicesController.add(discoveredDevices);
     _setState(BluetoothDiscoveryState.scanning);
 
@@ -125,6 +143,15 @@ class BluetoothDiscoveryService {
     } catch (e) {
       debugPrint('Failed to start discovery: $e');
       _setState(BluetoothDiscoveryState.idle);
+    }
+  }
+
+  Future<int?> requestDiscoverable([int duration = 300]) async {
+    try {
+      return await FlutterBluetoothSerial.instance.requestDiscoverable(duration);
+    } catch (e) {
+      debugPrint('Error requesting discoverable: $e');
+      return null;
     }
   }
 

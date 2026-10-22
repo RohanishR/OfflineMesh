@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -48,6 +49,7 @@ public class FileMetadataService {
                 .isEncrypted(Boolean.TRUE.equals(request.getIsEncrypted()))
                 .encryptedKeyEnvelope(request.getEncryptedKeyEnvelope())
                 .status(FileTransferStatus.PENDING)
+                .createdAt(Instant.now())
                 .build();
 
         metadata = fileMetadataRepository.save(metadata);
@@ -95,7 +97,7 @@ public class FileMetadataService {
                 .isEncrypted(metadata.getIsEncrypted())
                 .encryptedKeyEnvelope(metadata.getEncryptedKeyEnvelope())
                 .status(metadata.getStatus())
-                .createdAt(metadata.getCreatedAt())
+                .createdAt(metadata.getCreatedAt() != null ? metadata.getCreatedAt() : Instant.now())
                 .updatedAt(metadata.getUpdatedAt())
                 .build();
     }

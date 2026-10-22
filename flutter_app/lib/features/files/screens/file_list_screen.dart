@@ -1,3 +1,4 @@
+import '../../../core/ui/mesh_widgets.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -15,13 +16,12 @@ class FileListScreen extends StatefulWidget {
   final FriendService? friendService;
   final bool showSent;
 
-  const FileListScreen({
-    super.key, 
-    required this.fileService, 
-    required this.routingService,
-    this.friendService, 
-    this.showSent = false
-  });
+  const FileListScreen(
+      {super.key,
+      required this.fileService,
+      required this.routingService,
+      this.friendService,
+      this.showSent = false});
 
   @override
   State<FileListScreen> createState() => _FileListScreenState();
@@ -30,15 +30,19 @@ class FileListScreen extends StatefulWidget {
 class _FileListScreenState extends State<FileListScreen> {
   late Future<List<FileMetadata>> futureFiles;
   bool _isUploading = false;
+  late bool _showSent;
+  String _query = '';
+  String _filter = 'All';
   double _uploadProgress = 0.0;
-  
+
   StreamSubscription? _incomingFilesSub;
 
   @override
   void initState() {
     super.initState();
+    _showSent = widget.showSent;
     _loadFiles();
-    
+
     // Auto-refresh when new files arrive via Wi-Fi LAN
     _incomingFilesSub = widget.routingService.incomingFiles.listen((_) {
       if (mounted) {
@@ -46,7 +50,7 @@ class _FileListScreenState extends State<FileListScreen> {
       }
     });
   }
-  
+
   @override
   void dispose() {
     _incomingFilesSub?.cancel();
@@ -55,7 +59,7 @@ class _FileListScreenState extends State<FileListScreen> {
 
   void _loadFiles() {
     setState(() {
-      futureFiles = widget.showSent
+      futureFiles = _showSent
           ? widget.routingService.getCombinedSentFiles()
           : widget.routingService.getCombinedReceivedFiles();
     });
@@ -65,20 +69,29 @@ class _FileListScreenState extends State<FileListScreen> {
     final ext = fileName.split('.').last.toLowerCase();
     switch (ext) {
       case 'jpg':
-      case 'jpeg': return 'image/jpeg';
-      case 'png': return 'image/png';
-      case 'gif': return 'image/gif';
-      case 'pdf': return 'application/pdf';
-      case 'txt': return 'text/plain';
-      case 'mp4': return 'video/mp4';
-      case 'mp3': return 'audio/mpeg';
-      default: return 'application/octet-stream';
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'pdf':
+        return 'application/pdf';
+      case 'txt':
+        return 'text/plain';
+      case 'mp4':
+        return 'video/mp4';
+      case 'mp3':
+        return 'audio/mpeg';
+      default:
+        return 'application/octet-stream';
     }
   }
 
   Future<void> _pickAndUploadFile() async {
     if (widget.friendService == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Friend service not available')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Friend service not available')));
       return;
     }
 
@@ -86,7 +99,8 @@ class _FileListScreenState extends State<FileListScreen> {
       final friends = await widget.friendService!.getFriends();
       if (friends.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You have no friends to send files to.')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('You have no friends to send files to.')));
         return;
       }
 
@@ -105,15 +119,17 @@ class _FileListScreenState extends State<FileListScreen> {
                 itemBuilder: (context, index) {
                   final friend = friends[index];
                   // Highlight nearby friends
-                  final isNearby = widget.routingService.isPeerNearby(friend.offlineMeshId);
-                  
+                  final isNearby =
+                      widget.routingService.isPeerNearby(friend.offlineMeshId);
+
                   return ListTile(
                     title: Row(
                       children: [
                         Text(friend.username),
                         if (isNearby) ...[
                           const SizedBox(width: 8),
-                          const Icon(Icons.wifi_tethering, size: 14, color: Colors.green),
+                          const Icon(Icons.wifi_tethering,
+                              size: 14, color: MeshColors.blue),
                         ]
                       ],
                     ),
@@ -135,8 +151,25 @@ class _FileListScreenState extends State<FileListScreen> {
       FilePickerResult? result = await FilePicker.platform.pickFiles();
 
       if (result != null && result.files.isNotEmpty) {
-        File file = File(result.files.single.path!);
-        String fileName = result.files.single.name;
+        final picked = result.files.single;
+        if (picked.path == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cannot read file from device storage')),
+          );
+          return;
+        }
+
+        File file = File(picked.path!);
+        if (!file.existsSync()) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Selected file does not exist')),
+          );
+          return;
+        }
+
+        String fileName = picked.name;
         int fileSize = file.lengthSync();
         String contentType = _getMimeType(fileName);
 
@@ -146,20 +179,14 @@ class _FileListScreenState extends State<FileListScreen> {
         });
 
         try {
-          await widget.routingService.sendFile(
-            selectedFriend!.offlineMeshId,
-            fileName,
-            contentType,
-            fileSize,
-            file,
-            (progress) {
-              if (mounted) {
-                setState(() {
-                  _uploadProgress = progress;
-                });
-              }
+          await widget.routingService.sendFile(selectedFriend!.offlineMeshId,
+              fileName, contentType, fileSize, file, (progress) {
+            if (mounted) {
+              setState(() {
+                _uploadProgress = progress;
+              });
             }
-          );
+          });
 
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -172,91 +199,183 @@ class _FileListScreenState extends State<FileListScreen> {
             SnackBar(content: Text('Send failed: $e')),
           );
         } finally {
-          setState(() {
+          if (mounted) setState(() {
             _isUploading = false;
           });
         }
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
+  String _size(int bytes) => bytes < 1024
+      ? '$bytes B'
+      : bytes < 1048576
+          ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+          : '${(bytes / 1048576).toStringAsFixed(1)} MB';
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.showSent ? 'Sent Files' : 'Received Files'),
+  Widget build(BuildContext context) => MeshPage(
+        title: 'Files',
+        subtitle: 'Everything shared. In one place.',
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadFiles,
-          )
+              tooltip: 'Refresh files',
+              icon: const Icon(Icons.refresh_rounded),
+              onPressed: _loadFiles)
         ],
-      ),
-      body: Column(
-        children: [
+        floatingActionButton: widget.friendService == null
+            ? null
+            : FloatingActionButton(
+                tooltip: 'Send a file',
+                onPressed: _isUploading ? null : _pickAndUploadFile,
+                child: const Icon(Icons.upload_file_rounded)),
+        child: Column(children: [
+          MeshSearch(
+              hint: 'Search files',
+              onChanged: (v) => setState(() => _query = v.toLowerCase())),
+          Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(children: [
+                Expanded(
+                    child: SegmentedButton<bool>(
+                        segments: const [
+                      ButtonSegment(value: false, label: Text('Received')),
+                      ButtonSegment(value: true, label: Text('Sent'))
+                    ],
+                        selected: {
+                      _showSent
+                    },
+                        onSelectionChanged: (v) {
+                          _showSent = v.first;
+                          _loadFiles();
+                        })),
+              ])),
+          SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              child: Row(
+                  children: ['All', 'Images', 'Documents']
+                      .map((filter) => Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                              label: Text(filter),
+                              selected: _filter == filter,
+                              onSelected: (_) =>
+                                  setState(() => _filter = filter))))
+                      .toList())),
           if (_isUploading)
-            LinearProgressIndicator(value: _uploadProgress),
-          Expanded(
-            child: FutureBuilder<List<FileMetadata>>(
-              future: futureFiles,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                } else if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
-                } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('No files found.'));
-                }
-
-                final files = snapshot.data!;
-                return ListView.builder(
-                  itemCount: files.length,
-                  itemBuilder: (context, index) {
-                    final file = files[index];
-                    return ListTile(
-                      leading: const Icon(Icons.insert_drive_file),
-                      title: Row(
+            Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                child: GlassSurface(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(child: Text(file.originalFileName)),
-                          if (file.transport == 'WIFI_LAN')
-                            const Icon(Icons.wifi_tethering, size: 14, color: Colors.green),
-                          if (file.transport == 'BLUETOOTH')
-                            const Icon(Icons.bluetooth, size: 14, color: Colors.blue),
-                          if (file.transport == 'INTERNET')
-                            const Icon(Icons.cloud, size: 14, color: Colors.grey),
-                        ],
-                      ),
-                      subtitle: Text('Size: ${file.fileSize} bytes • Status: ${file.status}'),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => FileDetailsScreen(
-                              fileMetadata: file,
-                              fileService: widget.fileService,
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-      floatingActionButton: widget.showSent
-          ? FloatingActionButton(
-              onPressed: _isUploading ? null : _pickAndUploadFile,
-              tooltip: 'Upload File',
-              child: const Icon(Icons.upload_file),
-            )
-          : null,
-    );
-  }
+                      Text('Sending · ${(_uploadProgress * 100).round()}%'),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(
+                          value: _uploadProgress.clamp(0, 1))
+                    ]))),
+          Expanded(
+              child: FutureBuilder<List<FileMetadata>>(
+                  future: futureFiles,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting)
+                      return const LoadingStateView();
+                    if (snapshot.hasError)
+                      return EmptyStateView(
+                          icon: Icons.cloud_off_outlined,
+                          title: 'Files unavailable',
+                          message:
+                              'Check your connection and refresh your files.',
+                          onAction: _loadFiles);
+                    final files = (snapshot.data ?? [])
+                        .where((f) =>
+                            f.originalFileName.toLowerCase().contains(_query) &&
+                            (_filter == 'All' ||
+                                (_filter == 'Images'
+                                    ? f.contentType.startsWith('image/')
+                                    : !f.contentType.startsWith('image/'))))
+                        .toList();
+                    if (files.isEmpty)
+                      return EmptyStateView(
+                          icon: Icons.folder_open_rounded,
+                          title: _query.isEmpty && _filter == 'All'
+                              ? 'Room for something worth sharing'
+                              : 'No matching files',
+                          message: _showSent
+                              ? 'Files you send will appear here.'
+                              : 'Received files will appear here when available.');
+                    return RefreshIndicator(
+                        onRefresh: () async {
+                          _loadFiles();
+                          await futureFiles;
+                        },
+                        child: ListView.separated(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(24, 0, 24, 90),
+                            itemCount: files.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 12),
+                            itemBuilder: (_, i) {
+                              final file = files[i];
+                              final date = file.createdAt.toLocal();
+                              return GlassSurface(
+                                  padding: EdgeInsets.zero,
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.all(16),
+                                    leading: (file.contentType.startsWith('image/') &&
+                                            file.localFilePath != null &&
+                                            File(file.localFilePath!).existsSync())
+                                        ? ClipRRect(
+                                            borderRadius: BorderRadius.circular(14),
+                                            child: Image.file(
+                                              File(file.localFilePath!),
+                                              width: 48,
+                                              height: 48,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) => Container(
+                                                padding: const EdgeInsets.all(12),
+                                                decoration: BoxDecoration(
+                                                    color: MeshColors.blue.withValues(alpha: .12),
+                                                    borderRadius: BorderRadius.circular(16)),
+                                                child: const Icon(Icons.image_outlined),
+                                              ),
+                                            ),
+                                          )
+                                        : Container(
+                                            padding: const EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
+                                                color: MeshColors.blue
+                                                    .withValues(alpha: .12),
+                                                borderRadius:
+                                                    BorderRadius.circular(16)),
+                                            child: Icon(file.contentType
+                                                    .startsWith('image/')
+                                                ? Icons.image_outlined
+                                                : Icons.description_outlined)),
+                                    title: Text(file.originalFileName,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                    subtitle: Text(
+                                        '${_size(file.fileSize)} · ${date.day}/${date.month}/${date.year}\n${file.status}${file.transport == null ? '' : ' · ${file.transport}'}'),
+                                    trailing:
+                                        const Icon(Icons.chevron_right_rounded),
+                                    onTap: () => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) => FileDetailsScreen(
+                                                fileMetadata: file,
+                                                fileService:
+                                                    widget.fileService))),
+                                  ));
+                            }));
+                  })),
+        ]),
+      );
 }
-

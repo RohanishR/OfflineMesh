@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../core/network/auth_service.dart';
+import '../../../core/config/app_config.dart';
+import '../../../core/ui/server_config_dialog.dart';
 
 class RegisterScreen extends StatefulWidget {
   final AuthService authService;
@@ -26,19 +28,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       await widget.authService.register(
         username: _usernameController.text.trim(),
-        email: _emailController.text.trim().isEmpty ? null : _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+        email: _emailController.text.trim().isEmpty
+            ? null
+            : _emailController.text.trim(),
+        password: _passwordController.text,
       );
-      
+
       if (!mounted) return;
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Registration successful. Please log in.')),
+        const SnackBar(
+            content: Text('Registration successful. Please log in.')),
       );
       Navigator.of(context).pop();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _errorMessage = e.toString();
+        _errorMessage = AuthService.errorMessage(e);
       });
     } finally {
       if (mounted) {
@@ -60,9 +66,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      appBar: AppBar(
+        title: const Text('Register'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Server Settings',
+            onPressed: () {
+              ServerConfigDialog.show(
+                context,
+                onSaved: () {
+                  widget.authService.updateBaseUrl(AppConfig.backendBaseUrl);
+                  if (mounted)
+                    setState(() {
+                      _errorMessage = null;
+                    });
+                },
+              );
+            },
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -83,15 +109,49 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             const SizedBox(height: 24),
             if (_errorMessage != null) ...[
-              Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade300),
+                ),
+                child: Text(
+                  _errorMessage!,
+                  style: TextStyle(color: Colors.red.shade900, fontSize: 13),
+                ),
+              ),
               const SizedBox(height: 16),
             ],
             _isLoading
                 ? const CircularProgressIndicator()
-                : ElevatedButton(
-                    onPressed: _register,
-                    child: const Text('Register'),
+                : SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _register,
+                      child: const Text('Register'),
+                    ),
                   ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: () {
+                ServerConfigDialog.show(
+                  context,
+                  onSaved: () {
+                    widget.authService.updateBaseUrl(AppConfig.backendBaseUrl);
+                    if (mounted)
+                      setState(() {
+                        _errorMessage = null;
+                      });
+                  },
+                );
+              },
+              icon: const Icon(Icons.wifi, size: 16),
+              label: Text(
+                'Server: ${widget.authService.baseUrl.replaceAll("http://", "")}',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+            ),
           ],
         ),
       ),

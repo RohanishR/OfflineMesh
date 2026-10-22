@@ -96,10 +96,16 @@ class BleDiscoveryManager(private val context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             super.onScanResult(callbackType, result)
             
-            // Result is already filtered for our UUID, but double check
             val device = result.device
             val address = device.address
-            val name = try { device.name } catch (e: SecurityException) { "Unknown" } ?: "Unknown"
+            var name = result.scanRecord?.deviceName
+            if (name.isNullOrEmpty()) {
+                name = try { device.name } catch (e: SecurityException) { null }
+            }
+            val hasParcelUuid = result.scanRecord?.serviceUuids?.contains(PARCEL_UUID) == true
+            if (name.isNullOrEmpty()) {
+                name = if (hasParcelUuid) "OfflineMesh Peer" else "BLE Device"
+            }
             val rssi = result.rssi
 
             sendEvent(mapOf(
@@ -149,8 +155,12 @@ class BleDiscoveryManager(private val context: Context) {
             .addServiceUuid(PARCEL_UUID)
             .build()
 
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .build()
+
         try {
-            bleAdvertiser?.startAdvertising(settings, data, advertiseCallback)
+            bleAdvertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback)
             isAdvertising = true
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException: Missing BLUETOOTH_ADVERTISE permission", e)
@@ -172,6 +182,10 @@ class BleDiscoveryManager(private val context: Context) {
         sendEvent(mapOf("type" to "advertisingState", "state" to "stopped"))
     }
 
+    private val stopScanRunnable = Runnable {
+        stopScanning()
+    }
+
     private fun startScanning() {
         if (isScanning) return
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) return
@@ -184,9 +198,7 @@ class BleDiscoveryManager(private val context: Context) {
         }
 
         val filters = listOf(
-            ScanFilter.Builder()
-                .setServiceUuid(PARCEL_UUID)
-                .build()
+            ScanFilter.Builder().build()
         )
 
         val settings = ScanSettings.Builder()
@@ -198,6 +210,10 @@ class BleDiscoveryManager(private val context: Context) {
             isScanning = true
             Log.d(TAG, "BLE scanning started")
             sendEvent(mapOf("type" to "scanningState", "state" to "started"))
+
+            // Safety watchdog timeout to prevent uncontrolled scanning and battery drain
+            mainHandler.removeCallbacks(stopScanRunnable)
+            mainHandler.postDelayed(stopScanRunnable, 15000L)
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException: Missing BLUETOOTH_SCAN permission", e)
             sendEvent(mapOf("type" to "error", "message" to "Missing scan permission"))
@@ -207,6 +223,7 @@ class BleDiscoveryManager(private val context: Context) {
     }
 
     private fun stopScanning() {
+        mainHandler.removeCallbacks(stopScanRunnable)
         if (!isScanning) return
         try {
             bleScanner?.stopScan(scanCallback)

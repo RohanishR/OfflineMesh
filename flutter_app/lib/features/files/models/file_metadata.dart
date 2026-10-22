@@ -33,20 +33,26 @@ class FileMetadata {
 
   factory FileMetadata.fromJson(Map<String, dynamic> json) {
     return FileMetadata(
-      id: json['id'],
-      senderOfflineMeshId: json['senderOfflineMeshId'],
-      recipientOfflineMeshId: json['recipientOfflineMeshId'],
-      originalFileName: json['originalFileName'],
-      contentType: json['contentType'],
-      fileSize: json['fileSize'],
-      checksum: json['checksum'],
-      status: json['status'],
-      createdAt: DateTime.parse(json['createdAt']),
-      updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
-      localFilePath: json['localFilePath'],
-      transport: json['transport'],
-      isEncrypted: json['isEncrypted'] == true,
-      encryptedKeyEnvelope: json['encryptedKeyEnvelope'],
+      id: json['id']?.toString() ?? '',
+      senderOfflineMeshId: json['senderOfflineMeshId']?.toString() ?? '',
+      recipientOfflineMeshId: json['recipientOfflineMeshId']?.toString() ?? '',
+      originalFileName: json['originalFileName']?.toString() ?? 'unknown_file',
+      contentType: json['contentType']?.toString() ?? 'application/octet-stream',
+      fileSize: json['fileSize'] is num
+          ? (json['fileSize'] as num).toInt()
+          : (int.tryParse(json['fileSize']?.toString() ?? '0') ?? 0),
+      checksum: json['checksum']?.toString(),
+      status: json['status']?.toString() ?? 'COMPLETED',
+      createdAt: json['createdAt'] != null
+          ? (DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now())
+          : DateTime.now(),
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.tryParse(json['updatedAt'].toString())
+          : null,
+      localFilePath: json['localFilePath']?.toString(),
+      transport: json['transport']?.toString(),
+      isEncrypted: json['isEncrypted'] == true || json['encrypted'] == true,
+      encryptedKeyEnvelope: json['encryptedKeyEnvelope']?.toString(),
     );
   }
 

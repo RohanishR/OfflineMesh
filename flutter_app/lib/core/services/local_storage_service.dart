@@ -38,13 +38,23 @@ class LocalStorageService {
       final content = await file.readAsString();
       if (content.trim().isEmpty) return [];
       final List<dynamic> jsonList = jsonDecode(content);
-      final messages = jsonList.map((j) => Message.fromJson(Map<String, dynamic>.from(j))).toList();
+      final messages = jsonList
+          .map((j) => Message.fromJson(Map<String, dynamic>.from(j)))
+          .where((m) => m.content != '[Encrypted sent message]')
+          .toList();
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       return messages;
     } catch (e) {
       debugPrint('Error loading conversation for $peerOfflineMeshId: $e');
       return [];
     }
+  }
+
+  Future<void> removeMessage(String peerOfflineMeshId, String messageId) async {
+    final messages = await loadConversation(peerOfflineMeshId);
+    messages.removeWhere((message) => message.id == messageId);
+    final file = await _getConversationFile(peerOfflineMeshId);
+    await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
   }
 
   Future<void> saveMessage(String peerOfflineMeshId, Message message) async {
@@ -62,7 +72,7 @@ class LocalStorageService {
       };
 
       for (var msg in newMessages) {
-        // If already exists, update status or transport if newer
+        if (msg.content == '[Encrypted sent message]') continue;
         messageMap[msg.id] = msg;
       }
 

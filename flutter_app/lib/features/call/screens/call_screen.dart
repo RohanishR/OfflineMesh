@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/services/call_service.dart';
 import '../models/call_session_state.dart';
@@ -19,6 +20,7 @@ class _CallScreenState extends State<CallScreen> {
   String? _remotePeerId;
   bool _isMuted = false;
   bool _isVideoEnabled = true;
+  bool _isSpeakerOn = false;
   Timer? _durationTimer;
   int _secondsElapsed = 0;
 
@@ -26,6 +28,18 @@ class _CallScreenState extends State<CallScreen> {
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
   StreamSubscription? _localStreamSub;
   StreamSubscription? _remoteStreamSub;
+  StreamSubscription? _callStateSub;
+  StreamSubscription? _remotePeerSub;
+  bool _hasPopped = false;
+
+  void _safePop() {
+    if (!_hasPopped && mounted) {
+      _hasPopped = true;
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -35,7 +49,7 @@ class _CallScreenState extends State<CallScreen> {
 
     _initRenderers();
 
-    widget.callService.callStateStream.listen((state) {
+    _callStateSub = widget.callService.callStateStream.listen((state) {
       if (mounted) {
         setState(() {
           _currentState = state;
@@ -47,17 +61,18 @@ class _CallScreenState extends State<CallScreen> {
                    state == CallSessionState.REJECTED || 
                    state == CallSessionState.CANCELLED ||
                    state == CallSessionState.FAILED ||
+                   state == CallSessionState.BUSY ||
                    state == CallSessionState.IDLE) {
           _stopDurationTimer();
           
-          if (state == CallSessionState.IDLE && mounted) {
-            Navigator.of(context).pop();
+          if (state == CallSessionState.IDLE) {
+            _safePop();
           }
         }
       }
     });
 
-    widget.callService.remotePeerStream.listen((peerId) {
+    _remotePeerSub = widget.callService.remotePeerStream.listen((peerId) {
       if (mounted) {
         setState(() {
           _remotePeerId = peerId;
@@ -67,24 +82,34 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initRenderers() async {
-    await _localRenderer.initialize();
-    await _remoteRenderer.initialize();
+    if (!widget.callService.isVideoCall) {
+      return;
+    }
+    try {
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+      if (!mounted) return;
+      _localRenderer.srcObject = widget.callService.localStream;
+      _remoteRenderer.srcObject = widget.callService.remoteStream;
 
-    _localStreamSub = widget.callService.localStreamStream.listen((stream) {
-      if (mounted) {
-        setState(() {
-          _localRenderer.srcObject = stream;
-        });
-      }
-    });
+      _localStreamSub = widget.callService.localStreamStream.listen((stream) {
+        if (mounted && stream != null && stream.getVideoTracks().isNotEmpty) {
+          setState(() {
+            _localRenderer.srcObject = stream;
+          });
+        }
+      });
 
-    _remoteStreamSub = widget.callService.remoteStreamStream.listen((stream) {
-      if (mounted) {
-        setState(() {
-          _remoteRenderer.srcObject = stream;
-        });
-      }
-    });
+      _remoteStreamSub = widget.callService.remoteStreamStream.listen((stream) {
+        if (mounted && stream != null && stream.getVideoTracks().isNotEmpty) {
+          setState(() {
+            _remoteRenderer.srcObject = stream;
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to initialize video renderers: $e');
+    }
   }
 
   void _startDurationTimer() {
@@ -112,10 +137,16 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void dispose() {
     _stopDurationTimer();
+    _callStateSub?.cancel();
+    _remotePeerSub?.cancel();
     _localStreamSub?.cancel();
     _remoteStreamSub?.cancel();
-    _localRenderer.dispose();
-    _remoteRenderer.dispose();
+    try {
+      _localRenderer.srcObject = null;
+      _remoteRenderer.srcObject = null;
+      _localRenderer.dispose();
+      _remoteRenderer.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -135,6 +166,13 @@ class _CallScreenState extends State<CallScreen> {
 
   void _switchCamera() {
     widget.callService.switchCamera();
+  }
+
+  void _toggleSpeaker() {
+    setState(() {
+      _isSpeakerOn = !_isSpeakerOn;
+    });
+    widget.callService.setSpeakerphone(_isSpeakerOn);
   }
 
   @override
@@ -201,7 +239,9 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _currentState.name,
+                      _currentState == CallSessionState.BUSY
+                          ? 'User is Busy'
+                          : _currentState.name,
                       style: const TextStyle(fontSize: 18, color: Colors.white70),
                     ),
                     if (_currentState == CallSessionState.CALLING || _currentState == CallSessionState.RINGING) ...[
@@ -262,14 +302,31 @@ class _CallScreenState extends State<CallScreen> {
                     FloatingActionButton(
                       heroTag: 'reject',
                       backgroundColor: Colors.red,
-                      onPressed: () => widget.callService.rejectCall(),
+                      onPressed: () {
+                        widget.callService.rejectCall();
+                        _safePop();
+                      },
                       child: const Icon(Icons.call_end, color: Colors.white),
                     ),
                     // Accept Button
                     FloatingActionButton(
                       heroTag: 'accept',
                       backgroundColor: Colors.green,
-                      onPressed: () => widget.callService.acceptCall(),
+                      onPressed: () async {
+                        final mic = await Permission.microphone.request();
+                        if (widget.callService.isVideoCall) {
+                          await Permission.camera.request();
+                        }
+                        if (!mic.isGranted) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Microphone permission required to answer call.')),
+                            );
+                          }
+                          return;
+                        }
+                        widget.callService.acceptCall();
+                      },
                       child: const Icon(Icons.call, color: Colors.white),
                     ),
                   ] else if (_currentState != CallSessionState.IDLE) ...[
@@ -302,11 +359,24 @@ class _CallScreenState extends State<CallScreen> {
                         color: _isMuted ? Colors.black : Colors.white,
                       ),
                     ),
+                    // Speakerphone Toggle
+                    FloatingActionButton(
+                      heroTag: 'speaker',
+                      backgroundColor: _isSpeakerOn ? Colors.white : Colors.white24,
+                      onPressed: _toggleSpeaker,
+                      child: Icon(
+                        _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
+                        color: _isSpeakerOn ? Colors.black : Colors.white,
+                      ),
+                    ),
                     // End Call Button
                     FloatingActionButton(
                       heroTag: 'end',
                       backgroundColor: Colors.red,
-                      onPressed: () => widget.callService.endCall(),
+                      onPressed: () {
+                        widget.callService.endCall();
+                        _safePop();
+                      },
                       child: const Icon(Icons.call_end, color: Colors.white),
                     ),
                   ],

@@ -8,6 +8,9 @@ import lombok.Data;
 public class MessageResponse {
     private String id;
     private String senderOfflineMeshId;
+    private String recipientOfflineMeshId;
     private String content;
+    private String status;
+    private String replyToId;
     private String createdAt;
 }

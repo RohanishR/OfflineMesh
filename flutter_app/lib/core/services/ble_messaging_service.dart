@@ -29,7 +29,7 @@ class BleMessagingService {
   Future<void> initialize() async {
     try {
       await _channel.invokeMethod('startServer', {
-        'localId': currentUser.id
+        'localId': currentUser.offlineMeshId,
       });
       
       _eventSubscription = _eventChannel.receiveBroadcastStream().listen((event) {
@@ -139,6 +139,7 @@ class BleMessagingService {
         final message = Message(
           id: payload['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
           senderOfflineMeshId: payload['senderId'] ?? 'unknown',
+          recipientOfflineMeshId: currentUser.offlineMeshId,
           content: payload['content'] ?? '',
           createdAt: payload['timestamp'] != null 
               ? DateTime.parse(payload['timestamp']) 

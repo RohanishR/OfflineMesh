@@ -42,6 +42,10 @@ class BleDiscoveryService {
         _handleNativeEvent(Map<String, dynamic>.from(event));
       }
     });
+
+    startAdvertising().catchError((e) {
+      debugPrint('Error auto-starting BLE advertising: $e');
+    });
   }
 
   void _updateState(BleDiscoveryState newState) {
@@ -100,24 +104,42 @@ class BleDiscoveryService {
         Permission.bluetoothAdvertise,
         Permission.location,
       ].request();
+
+      final scanGranted = statuses[Permission.bluetoothScan]?.isGranted ?? false;
+      final connectGranted = statuses[Permission.bluetoothConnect]?.isGranted ?? false;
+      final locationGranted = statuses[Permission.location]?.isGranted ?? false;
+
+      // On Android 12+, scan and connect are sufficient. On older Android, location is required.
+      var canProceed = (scanGranted && connectGranted) || locationGranted;
+      if (!canProceed) {
+        final isScanOk = await Permission.bluetoothScan.isGranted;
+        final isConnOk = await Permission.bluetoothConnect.isGranted;
+        final isLocOk = await Permission.location.isGranted;
+        canProceed = (isScanOk && isConnOk) || isLocOk;
+      }
+
+      if (!canProceed) {
+        _updateState(BleDiscoveryState.permissionDenied);
+        return false;
+      }
     } else {
       statuses = await [
         Permission.bluetooth,
         Permission.location,
       ].request();
-    }
 
-    bool allGranted = true;
-    for (var status in statuses.values) {
-      if (!status.isGranted) {
-        allGranted = false;
-        break;
+      bool allGranted = true;
+      for (var status in statuses.values) {
+        if (!status.isGranted) {
+          allGranted = false;
+          break;
+        }
       }
-    }
 
-    if (!allGranted) {
-      _updateState(BleDiscoveryState.permissionDenied);
-      return false;
+      if (!allGranted) {
+        _updateState(BleDiscoveryState.permissionDenied);
+        return false;
+      }
     }
 
     return true;
@@ -128,6 +150,11 @@ class BleDiscoveryService {
 
     final hasPermissions = await _requestPermissions();
     if (!hasPermissions) return;
+
+    // Ensure we are advertising so other devices see us while we scan
+    startAdvertising().catchError((e) {
+      debugPrint('Error advertising during scan: $e');
+    });
 
     try {
       // Clear previous devices

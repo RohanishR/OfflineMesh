@@ -57,7 +57,6 @@ class E2eEncryptionService {
   final _x25519 = X25519();
   final _chacha20 = Chacha20.poly1305Aead();
   final _hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
-  final _sha256 = Sha256();
 
   // Local identity key pair
   SimpleKeyPair? _identityKeyPair;
@@ -194,31 +193,36 @@ class E2eEncryptionService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final remotePubKey = data['publicKey'] as String;
-        final remoteKeyId = data['keyId'] as String;
-        final remoteFingerprint = data['fingerprint'] as String;
+        final remotePubKey = data['publicKey']?.toString();
+        final remoteKeyId = data['keyId']?.toString() ?? 'key-0';
+        final remoteFingerprint = data['fingerprint']?.toString() ?? '';
 
-        if (cached != null) {
-          if (cached.publicKeyBase64 != remotePubKey) {
-            // Security alert: Key changed unexpectedly!
-            cached = cached.copyWith(
-              status: VerificationStatus.KEY_CHANGED,
-              previousFingerprint: cached.fingerprint,
+        if (remotePubKey != null && remotePubKey.isNotEmpty) {
+          if (cached != null) {
+            if (cached.publicKeyBase64 != remotePubKey) {
+              // Security alert: Key changed (contact reinstalled or regenerated key)!
+              cached = cached.copyWith(
+                publicKeyBase64: remotePubKey,
+                keyId: remoteKeyId,
+                fingerprint: remoteFingerprint,
+                status: VerificationStatus.KEY_CHANGED,
+                previousFingerprint: cached.fingerprint,
+                lastSeenAt: DateTime.now(),
+              );
+              _saveContact(cached);
+              return cached;
+            }
+          } else {
+            cached = ContactSecurityInfo(
+              offlineMeshId: offlineMeshId,
+              publicKeyBase64: remotePubKey,
+              keyId: remoteKeyId,
+              fingerprint: remoteFingerprint,
+              status: VerificationStatus.UNVERIFIED,
               lastSeenAt: DateTime.now(),
             );
             _saveContact(cached);
-            return cached;
           }
-        } else {
-          cached = ContactSecurityInfo(
-            offlineMeshId: offlineMeshId,
-            publicKeyBase64: remotePubKey,
-            keyId: remoteKeyId,
-            fingerprint: remoteFingerprint,
-            status: VerificationStatus.UNVERIFIED,
-            lastSeenAt: DateTime.now(),
-          );
-          _saveContact(cached);
         }
       }
     } catch (e) {
@@ -337,7 +341,7 @@ class E2eEncryptionService {
 
     // 4. Authenticated encryption (ChaCha20-Poly1305 AEAD)
     final nonce = _chacha20.newNonce();
-    final aad = utf8.encode('v2|$messageId|$localOfflineMeshId|$recipientOfflineMeshId|$_identityKeyId');
+    final aad = utf8.encode('v2|$messageId|$localOfflineMeshId|$recipientOfflineMeshId|${_identityKeyId ?? ''}');
 
     final secretBox = await _chacha20.encrypt(
       utf8.encode(plaintext),

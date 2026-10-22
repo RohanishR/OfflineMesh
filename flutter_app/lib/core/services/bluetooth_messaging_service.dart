@@ -137,8 +137,10 @@ class BluetoothMessagingService {
 
         final messageData = payload['message'];
         if (messageData != null) {
-          final message = Message.fromJson(messageData);
-          message.transport = TransportType.BLUETOOTH;
+          final message = Message.fromJson(messageData).copyWith(
+            recipientOfflineMeshId: currentUser.offlineMeshId,
+            transport: TransportType.BLUETOOTH,
+          );
           _incomingMessagesController.add(message);
         }
       }

@@ -87,8 +87,10 @@ public class FileTransferService {
                 .contentType(metadata.getContentType())
                 .fileSize(metadata.getFileSize())
                 .checksum(metadata.getChecksum())
+                .isEncrypted(metadata.getIsEncrypted())
+                .encryptedKeyEnvelope(metadata.getEncryptedKeyEnvelope())
                 .status(metadata.getStatus())
-                .createdAt(metadata.getCreatedAt())
+                .createdAt(metadata.getCreatedAt() != null ? metadata.getCreatedAt() : java.time.Instant.now())
                 .updatedAt(metadata.getUpdatedAt())
                 .build();
     }
