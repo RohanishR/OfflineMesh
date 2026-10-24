@@ -12,7 +12,15 @@ class Message {
   final String? replyToContent;
   final String? replyToSender;
   final Map<String, String>? reactions;
-  final String mediaType; // 'text', 'audio', 'image', 'file'
+  final String mediaType; // 'text', 'audio', 'image', 'file', 'video'
+  final bool isEdited;
+  final bool isDeleted;
+  final DateTime? editedAt;
+  final String? mediaPath;
+  final String? fileName;
+  final int? fileSize;
+  final int? durationMs;
+  final String? fileHash;
 
   Message({
     required this.id,
@@ -27,6 +35,14 @@ class Message {
     this.replyToSender,
     this.reactions,
     this.mediaType = 'text',
+    this.isEdited = false,
+    this.isDeleted = false,
+    this.editedAt,
+    this.mediaPath,
+    this.fileName,
+    this.fileSize,
+    this.durationMs,
+    this.fileHash,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) {
@@ -58,6 +74,16 @@ class Message {
       replyToSender: json['replyToSender']?.toString(),
       reactions: parsedReactions,
       mediaType: json['mediaType']?.toString() ?? 'text',
+      isEdited: json['isEdited'] == true,
+      isDeleted: json['isDeleted'] == true,
+      editedAt: json['editedAt'] != null
+          ? DateTime.tryParse(json['editedAt'].toString())
+          : null,
+      mediaPath: json['mediaPath']?.toString(),
+      fileName: json['fileName']?.toString(),
+      fileSize: json['fileSize'] is num ? (json['fileSize'] as num).toInt() : null,
+      durationMs: json['durationMs'] is num ? (json['durationMs'] as num).toInt() : null,
+      fileHash: json['fileHash']?.toString(),
     );
   }
 
@@ -75,6 +101,14 @@ class Message {
       if (replyToSender != null) 'replyToSender': replyToSender,
       if (reactions != null && reactions!.isNotEmpty) 'reactions': reactions,
       'mediaType': mediaType,
+      'isEdited': isEdited,
+      'isDeleted': isDeleted,
+      if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
+      if (mediaPath != null) 'mediaPath': mediaPath,
+      if (fileName != null) 'fileName': fileName,
+      if (fileSize != null) 'fileSize': fileSize,
+      if (durationMs != null) 'durationMs': durationMs,
+      if (fileHash != null) 'fileHash': fileHash,
     };
   }
 
@@ -91,6 +125,14 @@ class Message {
     String? replyToSender,
     Map<String, String>? reactions,
     String? mediaType,
+    bool? isEdited,
+    bool? isDeleted,
+    DateTime? editedAt,
+    String? mediaPath,
+    String? fileName,
+    int? fileSize,
+    int? durationMs,
+    String? fileHash,
   }) {
     return Message(
       id: id ?? this.id,
@@ -105,6 +147,14 @@ class Message {
       replyToSender: replyToSender ?? this.replyToSender,
       reactions: reactions ?? this.reactions,
       mediaType: mediaType ?? this.mediaType,
+      isEdited: isEdited ?? this.isEdited,
+      isDeleted: isDeleted ?? this.isDeleted,
+      editedAt: editedAt ?? this.editedAt,
+      mediaPath: mediaPath ?? this.mediaPath,
+      fileName: fileName ?? this.fileName,
+      fileSize: fileSize ?? this.fileSize,
+      durationMs: durationMs ?? this.durationMs,
+      fileHash: fileHash ?? this.fileHash,
     );
   }
 }

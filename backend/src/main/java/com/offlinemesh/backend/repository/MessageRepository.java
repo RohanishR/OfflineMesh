@@ -21,4 +21,12 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
     
     // For cursor sync
     List<Message> findByRecipientAndCreatedAtGreaterThanOrderByCreatedAtAsc(User recipient, Instant cursor, Pageable pageable);
+
+    java.util.Optional<Message> findFirstByConversationOrderByCreatedAtDesc(Conversation conversation);
+
+    long countByConversationAndRecipientAndStatusNot(Conversation conversation, User recipient, com.offlinemesh.backend.entity.enums.MessageStatus status);
+
+    List<Message> findBySenderAndRecipientAndStatusNot(User sender, User recipient, com.offlinemesh.backend.entity.enums.MessageStatus status);
+
+    List<Message> findByGroupOrderByCreatedAtAsc(com.offlinemesh.backend.entity.Group group);
 }

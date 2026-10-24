@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -97,9 +96,9 @@ class E2eEncryptionService {
     _prefs ??= await SharedPreferences.getInstance();
     _loadCachedContacts();
 
-    final privKeyHex = await _secureStorage.read(key: 'e2ee_priv_${localOfflineMeshId}');
-    final pubKeyHex = await _secureStorage.read(key: 'e2ee_pub_${localOfflineMeshId}');
-    final keyId = await _secureStorage.read(key: 'e2ee_key_id_${localOfflineMeshId}');
+    final privKeyHex = await _secureStorage.read(key: 'e2ee_priv_$localOfflineMeshId');
+    final pubKeyHex = await _secureStorage.read(key: 'e2ee_pub_$localOfflineMeshId');
+    final keyId = await _secureStorage.read(key: 'e2ee_key_id_$localOfflineMeshId');
 
     if (privKeyHex != null && pubKeyHex != null && keyId != null) {
       // Restore existing identity key
@@ -120,15 +119,15 @@ class E2eEncryptionService {
 
       final privBytes = await _identityKeyPair!.extractPrivateKeyBytes();
       await _secureStorage.write(
-        key: 'e2ee_priv_${localOfflineMeshId}',
+        key: 'e2ee_priv_$localOfflineMeshId',
         value: base64Encode(privBytes),
       );
       await _secureStorage.write(
-        key: 'e2ee_pub_${localOfflineMeshId}',
+        key: 'e2ee_pub_$localOfflineMeshId',
         value: base64Encode(_identityPublicKey!.bytes),
       );
       await _secureStorage.write(
-        key: 'e2ee_key_id_${localOfflineMeshId}',
+        key: 'e2ee_key_id_$localOfflineMeshId',
         value: _identityKeyId!,
       );
     }
@@ -141,6 +140,38 @@ class E2eEncryptionService {
     } catch (e) {
       debugPrint('Failed to register public key with backend: $e');
     }
+  }
+
+  /// Rotates the local long-term identity key pair, registers it with backend, and stores locally.
+  Future<String> rotateIdentityKeyPair() async {
+    _identityKeyPair = await _x25519.newKeyPair();
+    _identityPublicKey = await _identityKeyPair!.extractPublicKey();
+    _identityKeyId = const Uuid().v4();
+
+    final privBytes = await _identityKeyPair!.extractPrivateKeyBytes();
+    await _secureStorage.write(
+      key: 'e2ee_priv_$localOfflineMeshId',
+      value: base64Encode(privBytes),
+    );
+    await _secureStorage.write(
+      key: 'e2ee_pub_$localOfflineMeshId',
+      value: base64Encode(_identityPublicKey!.bytes),
+    );
+    await _secureStorage.write(
+      key: 'e2ee_key_id_$localOfflineMeshId',
+      value: _identityKeyId!,
+    );
+
+    _fingerprint = await computeFingerprint(_identityPublicKey!.bytes);
+
+    // Register new key with backend
+    try {
+      await _registerPublicKeyWithBackend();
+    } catch (e) {
+      debugPrint('Failed to register rotated key with backend: $e');
+    }
+
+    return _fingerprint!;
   }
 
   static final _staticSha256 = Sha256();

@@ -2,8 +2,24 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/physics.dart';
 import 'mesh_theme.dart';
 export 'mesh_theme.dart';
+
+/// A shared, normalized damped spring for small interface transitions.
+class MeshSpringCurve extends Curve {
+  const MeshSpringCurve();
+  @override
+  double transformInternal(double t) {
+    final spring = SpringSimulation(
+      const SpringDescription(mass: 1, stiffness: 300, damping: 35),
+      0,
+      1,
+      0,
+    );
+    return spring.x(t * .5) / spring.x(.5);
+  }
+}
 
 class GlassSurface extends StatelessWidget {
   final Widget child;
@@ -26,16 +42,23 @@ class GlassSurface extends StatelessWidget {
             end: Alignment.bottomRight,
             colors: dark
                 ? [
-                    const Color(0xFF252F65).withValues(alpha: opaque ? 1 : .95),
-                    const Color(0xFF13183F).withValues(alpha: opaque ? 1 : .94)
+                    Color.alphaBlend(MeshColors.blue.withValues(alpha: .24),
+                            MeshColors.midnight)
+                        .withValues(alpha: opaque ? 1 : .90),
+                    Color.alphaBlend(MeshColors.navy.withValues(alpha: .42),
+                            MeshColors.midnight)
+                        .withValues(alpha: opaque ? 1 : .94)
                   ]
                 : [
-                    Colors.white.withValues(alpha: opaque ? 1 : .95),
-                    const Color(0xFFEDF2FC).withValues(alpha: opaque ? 1 : .94)
+                    Colors.white.withValues(alpha: opaque ? 1 : .88),
+                    Color.alphaBlend(MeshColors.blue.withValues(alpha: .08),
+                            Colors.white)
+                        .withValues(alpha: opaque ? 1 : .94)
                   ]),
         borderRadius: BorderRadius.circular(26),
         border: Border.all(
-            color: dark ? Colors.white.withValues(alpha: .14) : Colors.white),
+            color:
+                dark ? MeshColors.blue.withValues(alpha: .35) : Colors.white),
       ),
       child: Padding(padding: padding, child: child),
     );
@@ -230,11 +253,11 @@ class GlassNavigationBar extends StatelessWidget {
   final ValueChanged<int> onChanged;
   const GlassNavigationBar(
       {super.key, required this.index, required this.onChanged});
-  static const labels = ['Chats', 'Friends', 'Nearby', 'Files', 'Profile'];
+  static const labels = ['Chats', 'Friends', 'Notes', 'Files', 'Profile'];
   static const icons = [
     Icons.chat_bubble_outline_rounded,
     Icons.people_outline_rounded,
-    Icons.radar_rounded,
+    Icons.lightbulb_outline_rounded,
     Icons.folder_outlined,
     Icons.person_outline_rounded
   ];
@@ -267,8 +290,8 @@ class GlassNavigationBar extends StatelessWidget {
                                 duration:
                                     MediaQuery.disableAnimationsOf(context)
                                         ? Duration.zero
-                                        : const Duration(milliseconds: 240),
-                                curve: Curves.easeOutCubic,
+                                        : const Duration(milliseconds: 500),
+                                curve: const MeshSpringCurve(),
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 12),
                                 decoration: BoxDecoration(
@@ -315,8 +338,10 @@ class _DiscoveryRadarState extends State<DiscoveryRadar>
   void _sync() {
     if (widget.scanning &&
         !MediaQuery.disableAnimationsOf(context) &&
-        TickerMode.of(context)) {
-      if (!_controller.isAnimating) _controller.repeat();
+        TickerMode.valuesOf(context).enabled) {
+      if (!_controller.isAnimating) {
+        _controller.repeat();
+      }
     } else {
       _controller.stop();
     }
@@ -404,3 +429,4 @@ class _RadarPainter extends CustomPainter {
   bool shouldRepaint(_RadarPainter old) =>
       phase != old.phase || scanning != old.scanning;
 }
+

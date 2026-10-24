@@ -73,4 +73,54 @@ class FriendService {
       throw Exception('Failed to remove friend');
     }
   }
+
+  Future<void> blockUser(String offlineMeshId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final blocked = prefs.getStringList('local_blocked_users') ?? [];
+    if (!blocked.contains(offlineMeshId)) {
+      blocked.add(offlineMeshId);
+      await prefs.setStringList('local_blocked_users', blocked);
+    }
+
+    if (jwtToken.isNotEmpty) {
+      try {
+        await http.post(
+          Uri.parse('$baseUrl/api/friends/block/$offlineMeshId'),
+          headers: _headers,
+        );
+      } catch (e) {
+        debugPrint('Remote block failed, saved locally: $e');
+      }
+    }
+  }
+
+  Future<void> unblockUser(String offlineMeshId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final blocked = prefs.getStringList('local_blocked_users') ?? [];
+    blocked.remove(offlineMeshId);
+    await prefs.setStringList('local_blocked_users', blocked);
+
+    if (jwtToken.isNotEmpty) {
+      try {
+        await http.delete(
+          Uri.parse('$baseUrl/api/friends/block/$offlineMeshId'),
+          headers: _headers,
+        );
+      } catch (e) {
+        debugPrint('Remote unblock failed, updated locally: $e');
+      }
+    }
+  }
+
+  Future<bool> isUserBlocked(String offlineMeshId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final blocked = prefs.getStringList('local_blocked_users') ?? [];
+    return blocked.contains(offlineMeshId);
+  }
+
+  Future<List<String>> getBlockedUserIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('local_blocked_users') ?? [];
+  }
 }
+

@@ -50,33 +50,49 @@ abstract final class MeshTheme {
     final base = ThemeData(
         useMaterial3: true, colorScheme: scheme, brightness: brightness);
     return base.copyWith(
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: true,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+      ),
       scaffoldBackgroundColor:
           dark ? MeshColors.midnight : MeshColors.porcelain,
-      textTheme: base.textTheme.copyWith(
-        headlineLarge: TextStyle(
-            fontSize: 34,
-            height: 1.15,
-            letterSpacing: -1.4,
-            fontWeight: FontWeight.w700,
-            color: scheme.onSurface),
-        headlineMedium: TextStyle(
-            fontSize: 28,
-            height: 1.2,
-            letterSpacing: -.8,
-            fontWeight: FontWeight.w700,
-            color: scheme.onSurface),
-        titleLarge: TextStyle(
-            fontSize: 21,
-            fontWeight: FontWeight.w600,
-            letterSpacing: -.4,
-            color: scheme.onSurface),
-        titleMedium: TextStyle(
-            fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface),
-        bodyMedium:
-            TextStyle(fontSize: 14, height: 1.5, color: scheme.onSurface),
-        bodySmall: TextStyle(
-            fontSize: 12, height: 1.4, color: scheme.onSurfaceVariant),
-      ).apply(fontFamily: 'Roboto'),
+      textTheme: base.textTheme
+          .copyWith(
+            headlineLarge: TextStyle(
+                fontSize: 34,
+                height: 1.15,
+                letterSpacing: -1.4,
+                fontWeight: FontWeight.w700,
+                color: scheme.onSurface),
+            headlineMedium: TextStyle(
+                fontSize: 28,
+                height: 1.2,
+                letterSpacing: -.8,
+                fontWeight: FontWeight.w700,
+                color: scheme.onSurface),
+            titleLarge: TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -.4,
+                color: scheme.onSurface),
+            titleMedium: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface),
+            bodyMedium:
+                TextStyle(fontSize: 14, height: 1.5, color: scheme.onSurface),
+            bodySmall: TextStyle(
+                fontSize: 12, height: 1.4, color: scheme.onSurfaceVariant),
+          )
+          .apply(fontFamily: 'Roboto'),
       appBarTheme: AppBarTheme(
           backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
@@ -105,6 +121,8 @@ abstract final class MeshTheme {
           shape: StadiumBorder()),
       filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
+              backgroundColor: MeshColors.orange,
+              foregroundColor: MeshColors.midnight,
               minimumSize: const Size(48, 52),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18)))),

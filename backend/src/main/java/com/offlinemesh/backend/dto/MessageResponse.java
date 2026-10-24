@@ -13,4 +13,6 @@ public class MessageResponse {
     private String status;
     private String replyToId;
     private String createdAt;
+    private boolean isEdited;
+    private boolean isDeleted;
 }

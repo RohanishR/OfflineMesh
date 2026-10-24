@@ -3,6 +3,4 @@
 enum TransportType {
   INTERNET,
   WIFI_LAN,
-  BLUETOOTH,
-  BLE,
 }

@@ -7,8 +7,6 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -54,17 +52,21 @@ public class Message implements Persistable<UUID> {
         this.isNew = false;
     }
 
-    @ManyToOne(optional = false)
-    @JoinColumn(name = "conversation_id", nullable = false)
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "conversation_id", nullable = true)
     private Conversation conversation;
 
     @ManyToOne(optional = false)
     @JoinColumn(name = "sender_id", nullable = false)
     private User sender;
 
-    @ManyToOne(optional = false)
-    @JoinColumn(name = "recipient_id", nullable = false)
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "recipient_id", nullable = true)
     private User recipient;
+
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "group_id", nullable = true)
+    private Group group;
 
     @Column(nullable = true, columnDefinition = "TEXT")
     private String content;
@@ -87,6 +89,14 @@ public class Message implements Persistable<UUID> {
     @ManyToOne
     @JoinColumn(name = "reply_to_id")
     private Message replyTo;
+
+    @Column(name = "is_edited", nullable = false)
+    @Builder.Default
+    private boolean isEdited = false;
+
+    @Column(name = "is_deleted", nullable = false)
+    @Builder.Default
+    private boolean isDeleted = false;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

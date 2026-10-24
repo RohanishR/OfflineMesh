@@ -81,9 +81,13 @@ class CallService {
   bool get isLocalWifiCall => _isLocalWifiCall;
 
   void _handleIncomingSignal(WebRtcSignalingMessage message, {bool localWifi = false}) {
-    if (_disposed || message.recipientOfflineMeshId != localOfflineMeshId) return;
+    if (_disposed || message.recipientOfflineMeshId != localOfflineMeshId) {
+      return;
+    }
     if (_currentSessionId == message.sessionId && _remoteOfflineMeshId != null &&
-        message.senderOfflineMeshId != _remoteOfflineMeshId) return;
+        message.senderOfflineMeshId != _remoteOfflineMeshId) {
+      return;
+    }
     if (_currentSessionId != null && message.sessionId != _currentSessionId) {
       if (message.type == 'CALL_OFFER') {
         _sendSignal(
@@ -200,7 +204,7 @@ class CallService {
     // When operating completely offline on local Wi-Fi, omit external STUN servers to avoid DNS timeouts
     final iceServersToUse = (_isLocalWifiCall && !signalingService.isConnected)
         ? <Map<String, dynamic>>[]
-        : (customIceServers ?? AppConfig.defaultIceServers);
+        : (customIceServers ?? await AppConfig.getIceServers());
 
     _webRtcCallService = WebRtcCallService(
       customIceServers: iceServersToUse,

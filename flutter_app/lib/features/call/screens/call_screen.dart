@@ -9,7 +9,7 @@ import '../models/call_session_state.dart';
 class CallScreen extends StatefulWidget {
   final CallService callService;
 
-  const CallScreen({Key? key, required this.callService}) : super(key: key);
+  const CallScreen({super.key, required this.callService});
 
   @override
   State<CallScreen> createState() => _CallScreenState();

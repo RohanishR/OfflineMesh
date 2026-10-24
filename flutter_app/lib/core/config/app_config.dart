@@ -99,4 +99,30 @@ class AppConfig {
       ]
     },
   ];
+
+  static List<Map<String, dynamic>>? _cachedIceServers;
+
+  /// Loads configured ICE servers (custom TURN/STUN or default Google STUN)
+  static Future<List<Map<String, dynamic>>> getIceServers() async {
+    if (_cachedIceServers != null) return _cachedIceServers!;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('custom_ice_servers');
+      if (saved != null && saved.trim().isNotEmpty) {
+        final List<dynamic> list = jsonDecode(saved);
+        _cachedIceServers = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        return _cachedIceServers!;
+      }
+    } catch (e) {
+      debugPrint('Error loading custom ICE servers: $e');
+    }
+    return defaultIceServers;
+  }
+
+  /// Sets custom STUN/TURN ICE servers configuration
+  static Future<void> setCustomIceServers(List<Map<String, dynamic>> servers) async {
+    _cachedIceServers = servers;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('custom_ice_servers', jsonEncode(servers));
+  }
 }

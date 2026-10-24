@@ -101,14 +101,19 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
                     child: const Text('Remove'))
               ],
             ));
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
     try {
       await widget.friendService.removeFriend(friend.offlineMeshId);
-      if (mounted) await _loadFriends();
+      if (mounted) {
+        await _loadFriends();
+      }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Couldn’t remove friend. Try again.')));
+      }
     }
   }
 

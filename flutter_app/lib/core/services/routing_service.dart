@@ -15,13 +15,8 @@ import 'message_service.dart';
 import 'wifi_messaging_service.dart';
 import 'wifi_peer_discovery_service.dart';
 import 'wifi_file_transfer_service.dart';
-import 'bluetooth_messaging_service.dart';
-import 'bluetooth_file_transfer_service.dart';
-import 'ble_discovery_service.dart';
-import 'ble_messaging_service.dart';
 import 'local_storage_service.dart';
 import '../models/discovered_peer.dart';
-import '../models/ble_discovered_device.dart';
 import '../../features/files/models/file_metadata.dart';
 import '../../features/files/services/file_service.dart';
 
@@ -31,10 +26,6 @@ class RoutingService {
   final WifiMessagingService wifiMessagingService;
   final WifiPeerDiscoveryService discoveryService;
   final WifiFileTransferService wifiFileTransferService;
-  final BluetoothMessagingService bluetoothMessagingService;
-  final BluetoothFileTransferService bluetoothFileTransferService;
-  final BleDiscoveryService? bleDiscoveryService;
-  final BleMessagingService? bleMessagingService;
   final E2eEncryptionService? encryptionService;
   final LocalStorageService localStorageService;
 
@@ -45,18 +36,15 @@ class RoutingService {
   Stream<FileMetadata> get incomingFiles => _incomingFilesController.stream;
 
   List<DiscoveredPeer> _activePeers = [];
-  List<BleDiscoveredDevice> _activeBlePeers = [];
-  List<BleDiscoveredDevice> get activeBlePeers => List.unmodifiable(_activeBlePeers);
   
   StreamSubscription? _peersSubscription;
-  StreamSubscription? _blePeersSubscription;
   StreamSubscription? _wifiMessagesSubscription;
-  StreamSubscription? _bluetoothMessagesSubscription;
-  StreamSubscription? _bleMessagesSubscription;
   StreamSubscription? _internetMessagesSubscription;
+  StreamSubscription? _statusUpdatesSubscription;
   StreamSubscription? _wifiFilesSubscription;
-
-  StreamSubscription? _bluetoothFilesSubscription;
+  StreamSubscription? _connectionStateSubscription;
+  StreamSubscription? _relayedPacketsSubscription;
+  Timer? _outboxRetryTimer;
 
   final List<FileMetadata> _localSentFiles = [];
   final List<FileMetadata> _localReceivedFiles = [];
@@ -68,10 +56,6 @@ class RoutingService {
     required this.wifiMessagingService,
     required this.discoveryService,
     required this.wifiFileTransferService,
-    required this.bluetoothMessagingService,
-    required this.bluetoothFileTransferService,
-    this.bleDiscoveryService,
-    this.bleMessagingService,
     this.encryptionService,
     LocalStorageService? localStorageService,
   }) : localStorageService = localStorageService ?? LocalStorageService();
@@ -84,36 +68,75 @@ class RoutingService {
       flushOutbox();
     });
 
-    _blePeersSubscription = bleDiscoveryService?.devicesStream.listen((peers) {
-      _activeBlePeers = peers;
-      for (var peer in peers) {
-        bleMessagingService?.connectAndHandshake(peer);
-      }
-      flushOutbox();
-    });
-
     _wifiMessagesSubscription = wifiMessagingService.incomingMessages.listen((message) {
       _deliverIncomingMessage(message, TransportType.WIFI_LAN);
-    });
-    
-    _bluetoothMessagesSubscription = bluetoothMessagingService.incomingMessages.listen((message) {
-      _deliverIncomingMessage(message, TransportType.BLUETOOTH);
-    });
-
-    _bleMessagesSubscription = bleMessagingService?.incomingMessages.listen((message) {
-      _deliverIncomingMessage(message, TransportType.BLE);
     });
 
     _internetMessagesSubscription = messageService.incomingMessages.listen((message) {
       _deliverIncomingMessage(message, TransportType.INTERNET);
     });
 
+    _statusUpdatesSubscription = messageService.statusUpdates.listen((statusMap) async {
+      final status = statusMap['status']?.toString();
+      final senderId = statusMap['senderOfflineMeshId']?.toString();
+      final recipientId = statusMap['recipientOfflineMeshId']?.toString();
+      final messageId = statusMap['messageId']?.toString();
+      final newContent = statusMap['newContent']?.toString();
+
+      if (status == 'READ' && recipientId != null) {
+        final conversationPeer = recipientId;
+        final msgs = await localStorageService.loadConversation(conversationPeer);
+        bool changed = false;
+        for (int i = 0; i < msgs.length; i++) {
+          if (msgs[i].senderOfflineMeshId == wifiMessagingService.currentUser.offlineMeshId &&
+              msgs[i].status.toLowerCase() != 'read') {
+            msgs[i] = msgs[i].copyWith(status: 'read');
+            changed = true;
+            _incomingMessagesController.add(msgs[i]);
+          }
+        }
+        if (changed) {
+          await localStorageService.saveMessages(conversationPeer, msgs);
+        }
+      } else if (status == 'EDITED' && messageId != null && senderId != null && newContent != null) {
+        final conversationPeer = senderId;
+        final msgs = await localStorageService.loadConversation(conversationPeer);
+        final idx = msgs.indexWhere((m) => m.id == messageId);
+        if (idx != -1) {
+          final updated = msgs[idx].copyWith(content: newContent, isEdited: true, editedAt: DateTime.now());
+          await localStorageService.updateMessage(conversationPeer, updated);
+          _incomingMessagesController.add(updated);
+        }
+      } else if (status == 'DELETED' && messageId != null && senderId != null) {
+        final conversationPeer = senderId;
+        final msgs = await localStorageService.loadConversation(conversationPeer);
+        final idx = msgs.indexWhere((m) => m.id == messageId);
+        if (idx != -1) {
+          final updated = msgs[idx].copyWith(content: '🚫 This message was deleted', isDeleted: true);
+          await localStorageService.updateMessage(conversationPeer, updated);
+          _incomingMessagesController.add(updated);
+        }
+      }
+    });
+
     _wifiFilesSubscription = wifiFileTransferService.incomingFiles.listen((fileMeta) {
       _deliverIncomingFile(fileMeta, 'WIFI_LAN');
     });
-    
-    _bluetoothFilesSubscription = bluetoothFileTransferService.incomingFiles.listen((fileMeta) {
-      _deliverIncomingFile(fileMeta, 'BLUETOOTH');
+
+    _relayedPacketsSubscription = wifiMessagingService.relayedPackets.listen((packet) {
+      handleRelayedPacket(packet);
+    });
+
+    _connectionStateSubscription = messageService.connectionStateStream.listen((connected) {
+      if (connected) {
+        debugPrint('Internet connection restored: triggering instant outbox flush.');
+        flushOutbox();
+      }
+    });
+
+    // Periodic outbox flush & relay buffer retry timer (every 20s)
+    _outboxRetryTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      flushOutbox();
     });
 
     flushOutbox();
@@ -143,8 +166,9 @@ class RoutingService {
       return;
     }
 
-    // 2. Deduplicate incoming messages across transports
-    if (_recentlyDeliveredMessageIds.contains(message.id)) {
+    // 2. Persistent deduplication across transports and app restarts
+    if (_recentlyDeliveredMessageIds.contains(message.id) ||
+        await localStorageService.hasMessageBeenProcessed(message.id)) {
       debugPrint('Dropping already delivered duplicate message: ${message.id}');
       return;
     }
@@ -152,6 +176,7 @@ class RoutingService {
     if (_recentlyDeliveredMessageIds.length > 500) {
       _recentlyDeliveredMessageIds.remove(_recentlyDeliveredMessageIds.first);
     }
+    await localStorageService.markMessageProcessed(message.id);
 
     // 3. Encrypted envelope handling
     if (EncryptedEnvelope.isEncryptedEnvelope(message.content)) {
@@ -191,37 +216,82 @@ class RoutingService {
       );
     }
 
-    // 5. Intercept WhatsApp emoji reactions
+    // 5. Intercept WhatsApp emoji reactions & control messages
     try {
       final trimmed = message.content.trim();
-      if (trimmed.startsWith('{"type":"REACTION"') || trimmed.startsWith('{"type": "REACTION"')) {
-        final data = jsonDecode(trimmed) as Map<String, dynamic>;
-        if (data['type'] == 'REACTION') {
-          final targetId = data['targetMessageId']?.toString();
-          final emoji = data['emoji']?.toString();
-          final senderId = data['senderId']?.toString() ?? message.senderOfflineMeshId;
-          if (targetId != null && emoji != null) {
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        final data = jsonDecode(trimmed);
+        if (data is Map<String, dynamic> && data.containsKey('type')) {
+          final type = data['type']?.toString();
+          if (type == 'REACTION') {
+            final targetId = data['targetMessageId']?.toString();
+            final emoji = data['emoji']?.toString();
+            final senderId = data['senderId']?.toString() ?? message.senderOfflineMeshId;
+            if (targetId != null && emoji != null) {
+              final conversationPeer = message.senderOfflineMeshId;
+              final msgs = await localStorageService.loadConversation(conversationPeer);
+              final idx = msgs.indexWhere((m) => m.id == targetId);
+              if (idx != -1) {
+                final targetMsg = msgs[idx];
+                final currentReactions = Map<String, String>.from(targetMsg.reactions ?? {});
+                if (currentReactions[senderId] == emoji) {
+                  currentReactions.remove(senderId);
+                } else {
+                  currentReactions[senderId] = emoji;
+                }
+                final updated = targetMsg.copyWith(reactions: currentReactions);
+                await localStorageService.saveMessage(conversationPeer, updated);
+                _incomingMessagesController.add(updated);
+                return;
+              }
+            }
+          } else if (type == 'READ_RECEIPT') {
             final conversationPeer = message.senderOfflineMeshId;
             final msgs = await localStorageService.loadConversation(conversationPeer);
-            final idx = msgs.indexWhere((m) => m.id == targetId);
-            if (idx != -1) {
-              final targetMsg = msgs[idx];
-              final currentReactions = Map<String, String>.from(targetMsg.reactions ?? {});
-              if (currentReactions[senderId] == emoji) {
-                currentReactions.remove(senderId);
-              } else {
-                currentReactions[senderId] = emoji;
+            bool changed = false;
+            for (int i = 0; i < msgs.length; i++) {
+              if (msgs[i].senderOfflineMeshId == myOfflineMeshId && msgs[i].status.toLowerCase() != 'read') {
+                msgs[i] = msgs[i].copyWith(status: 'read');
+                changed = true;
+                _incomingMessagesController.add(msgs[i]);
               }
-              final updated = targetMsg.copyWith(reactions: currentReactions);
-              await localStorageService.saveMessage(conversationPeer, updated);
-              _incomingMessagesController.add(updated);
-              return; // Handled as reaction update; do not create duplicate text bubble
+            }
+            if (changed) {
+              await localStorageService.saveMessages(conversationPeer, msgs);
+            }
+            return;
+          } else if (type == 'EDIT_MESSAGE') {
+            final targetId = data['messageId']?.toString();
+            final newContent = data['newContent']?.toString();
+            if (targetId != null && newContent != null) {
+              final conversationPeer = message.senderOfflineMeshId;
+              final msgs = await localStorageService.loadConversation(conversationPeer);
+              final idx = msgs.indexWhere((m) => m.id == targetId);
+              if (idx != -1) {
+                final updated = msgs[idx].copyWith(content: newContent, isEdited: true, editedAt: DateTime.now());
+                await localStorageService.updateMessage(conversationPeer, updated);
+                _incomingMessagesController.add(updated);
+                return;
+              }
+            }
+          } else if (type == 'DELETE_MESSAGE') {
+            final targetId = data['messageId']?.toString();
+            if (targetId != null) {
+              final conversationPeer = message.senderOfflineMeshId;
+              final msgs = await localStorageService.loadConversation(conversationPeer);
+              final idx = msgs.indexWhere((m) => m.id == targetId);
+              if (idx != -1) {
+                final updated = msgs[idx].copyWith(content: '🚫 This message was deleted', isDeleted: true);
+                await localStorageService.updateMessage(conversationPeer, updated);
+                _incomingMessagesController.add(updated);
+                return;
+              }
             }
           }
         }
       }
     } catch (e) {
-      debugPrint('Reaction parsing note: $e');
+      debugPrint('Reaction/control message parsing note: $e');
     }
 
     // 6. Persist incoming message locally for offline access
@@ -263,17 +333,46 @@ class RoutingService {
     _localReceivedFiles.add(fileMeta);
     await localStorageService.saveReceivedFile(fileMeta);
     _incomingFilesController.add(fileMeta);
+
+    // Also persist as an inline rich media message in the sender conversation
+    try {
+      final ext = fileMeta.originalFileName.split('.').last.toLowerCase();
+      String mediaType = 'file';
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(ext) || fileMeta.contentType.startsWith('image/')) {
+        mediaType = 'image';
+      } else if (['mp4', 'mov', 'avi', 'mkv'].contains(ext) || fileMeta.contentType.startsWith('video/')) {
+        mediaType = 'video';
+      } else if (['m4a', 'mp3', 'wav', 'aac', 'ogg'].contains(ext) || fileMeta.contentType.startsWith('audio/')) {
+        mediaType = 'audio';
+      }
+
+      final mediaMessage = Message(
+        id: fileMeta.id,
+        senderOfflineMeshId: fileMeta.senderOfflineMeshId,
+        recipientOfflineMeshId: fileMeta.recipientOfflineMeshId,
+        content: fileMeta.originalFileName,
+        createdAt: fileMeta.createdAt,
+        status: 'delivered',
+        transport: transport == 'WIFI_LAN' ? TransportType.WIFI_LAN : TransportType.INTERNET,
+        mediaType: mediaType,
+        mediaPath: fileMeta.localFilePath,
+        fileName: fileMeta.originalFileName,
+        fileSize: fileMeta.fileSize,
+        fileHash: fileMeta.checksum,
+      );
+
+      await localStorageService.saveMessage(fileMeta.senderOfflineMeshId, mediaMessage);
+      _incomingMessagesController.add(mediaMessage);
+    } catch (e) {
+      debugPrint('Failed to convert incoming file to media message: $e');
+    }
   }
 
   void shutdown() {
     _peersSubscription?.cancel();
-    _blePeersSubscription?.cancel();
     _wifiMessagesSubscription?.cancel();
-    _bluetoothMessagesSubscription?.cancel();
-    _bleMessagesSubscription?.cancel();
     _internetMessagesSubscription?.cancel();
     _wifiFilesSubscription?.cancel();
-    _bluetoothFilesSubscription?.cancel();
     _incomingMessagesController.close();
     _incomingFilesController.close();
   }
@@ -283,30 +382,41 @@ class RoutingService {
       final peer = _activePeers.firstWhere((p) => p.offlineMeshId == offlineMeshId);
       return peer.isReachable;
     } catch (e) {
-      return wifiMessagingService.getKnownIpForPeer(offlineMeshId) != null;
+      return false;
+    }
+  }
+
+  DiscoveredPeer? getPeerByOfflineMeshId(String offlineMeshId) {
+    try {
+      return _activePeers.firstWhere((p) => p.offlineMeshId == offlineMeshId && p.isReachable);
+    } catch (e) {
+      return null;
     }
   }
 
   DiscoveredPeer? getNearbyPeer(String offlineMeshId) {
-    try {
-      return _activePeers.firstWhere((p) => p.offlineMeshId == offlineMeshId && p.isReachable);
-    } catch (e) {
-      final cachedIp = wifiMessagingService.getKnownIpForPeer(offlineMeshId);
-      if (cachedIp != null) {
-        final now = DateTime.now();
-        return DiscoveredPeer(
-          offlineMeshId: offlineMeshId,
-          displayName: offlineMeshId,
-          deviceId: offlineMeshId,
-          ipAddress: cachedIp,
-          port: 45455,
-          discoveryTimestamp: now,
-          lastSeenTimestamp: now,
-          isReachable: true,
-        );
-      }
-      return null;
-    }
+    return getPeerByOfflineMeshId(offlineMeshId);
+  }
+
+  void addManualPeer({
+    required String offlineMeshId,
+    required String displayName,
+    required String ipAddress,
+    required int port,
+  }) {
+    _activePeers.removeWhere((p) => p.offlineMeshId == offlineMeshId);
+    _activePeers.add(
+      DiscoveredPeer(
+        offlineMeshId: offlineMeshId,
+        displayName: displayName,
+        deviceId: 'manual_${offlineMeshId.hashCode}',
+        ipAddress: ipAddress,
+        port: port,
+        discoveryTimestamp: DateTime.now(),
+        lastSeenTimestamp: DateTime.now(),
+        isReachable: true,
+      ),
+    );
   }
 
   Future<List<TransportType>> getAvailableRoutes(String destId) async {
@@ -317,26 +427,7 @@ class RoutingService {
       routes.add(TransportType.WIFI_LAN);
     }
 
-    // 2. BLUETOOTH
-    final btAddress = bluetoothMessagingService.getAddressForOfflineMeshId(destId);
-    if (btAddress != null) {
-      routes.add(TransportType.BLUETOOTH);
-    }
-
-    // 3. BLE (Direct or Mesh)
-    if (bleMessagingService != null) {
-      final bleAddress = bleMessagingService!.getAddressForOfflineMeshId(destId);
-      if (bleAddress != null) {
-        routes.add(TransportType.BLE); // Direct
-      } else {
-        final hasMesh = await bleMessagingService!.hasMeshRoute(destId);
-        if (hasMesh) {
-          routes.add(TransportType.BLE); // Mesh
-        }
-      }
-    }
-
-    // 4. INTERNET (Only route if authenticated with valid token)
+    // 2. INTERNET (Only route if authenticated with valid token)
     if (messageService.jwtToken.isNotEmpty) {
       routes.add(TransportType.INTERNET);
     }
@@ -410,12 +501,6 @@ class RoutingService {
             final peer = _activePeers.firstWhere((p) => p.offlineMeshId == recipientOfflineMeshId && p.isReachable);
             await wifiMessagingService.sendMessage(peer, wireMessage);
             break;
-          case TransportType.BLUETOOTH:
-            await bluetoothMessagingService.sendMessage(recipientOfflineMeshId, wireMessage);
-            break;
-          case TransportType.BLE:
-            await bleMessagingService!.sendMessage(recipientOfflineMeshId, wireMessage);
-            break;
           case TransportType.INTERNET:
             final backendMsg = await messageService.sendMessage(recipientOfflineMeshId, wireContent);
             if (encryptionService != null) {
@@ -440,64 +525,69 @@ class RoutingService {
       }
     }
 
-    // 5. BLE Store-And-Forward Queueing (Offline Fallback)
-    if (bleMessagingService != null) {
-      debugPrint('No active transports available. Attempting BLE store-and-forward.');
-      wireMessage.transport = TransportType.BLE;
-      localMessage.transport = TransportType.BLE;
-      localMessage.status = 'queued';
-      try {
-        await bleMessagingService!.sendMessage(recipientOfflineMeshId, wireMessage);
-        await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
-        return localMessage;
-      } catch (e) {
-        debugPrint('BLE store-and-forward queue failed: $e');
-      }
-    }
-
-    // 6. Local Persistent Outbox Queue (Offline Fallback for auto-flush on reconnect)
+    // Local Persistent Outbox Queue (Offline Fallback for auto-flush on reconnect)
     debugPrint('Queuing message $messageId in persistent offline outbox.');
     localMessage.status = 'queued';
-    await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
     await localStorageService.addToOutbox(
       recipientOfflineMeshId: recipientOfflineMeshId,
       message: localMessage,
       wireContent: wireContent,
     );
+    await localStorageService.saveMessage(recipientOfflineMeshId, localMessage);
     return localMessage;
   }
 
+  /// Sends a WhatsApp-style emoji reaction to a target message
   Future<void> sendReaction({
     required String peerOfflineMeshId,
     required String messageId,
     required String emoji,
   }) async {
-    final myId = wifiMessagingService.currentUser.offlineMeshId;
-    final messages = await localStorageService.loadConversation(peerOfflineMeshId);
-    final targetIndex = messages.indexWhere((m) => m.id == messageId);
-    if (targetIndex != -1) {
-      final msg = messages[targetIndex];
-      final currentReactions = Map<String, String>.from(msg.reactions ?? {});
+    final payload = jsonEncode({
+      'type': 'REACTION',
+      'targetMessageId': messageId,
+      'emoji': emoji,
+      'senderId': wifiMessagingService.currentUser.offlineMeshId,
+    });
+
+    final conversationPeer = peerOfflineMeshId;
+    final msgs = await localStorageService.loadConversation(conversationPeer);
+    final idx = msgs.indexWhere((m) => m.id == messageId);
+    if (idx != -1) {
+      final myId = wifiMessagingService.currentUser.offlineMeshId;
+      final currentReactions = Map<String, String>.from(msgs[idx].reactions ?? {});
       if (currentReactions[myId] == emoji) {
         currentReactions.remove(myId);
       } else {
         currentReactions[myId] = emoji;
       }
-      final updated = msg.copyWith(reactions: currentReactions);
-      await localStorageService.saveMessage(peerOfflineMeshId, updated);
+      final updated = msgs[idx].copyWith(reactions: currentReactions);
+      await localStorageService.saveMessage(conversationPeer, updated);
       _incomingMessagesController.add(updated);
+    }
 
-      // Transmit reaction signal across mesh
+    final routes = await getAvailableRoutes(peerOfflineMeshId);
+    final reactionMsg = Message(
+      id: 'reaction_${DateTime.now().millisecondsSinceEpoch}',
+      senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+      recipientOfflineMeshId: peerOfflineMeshId,
+      content: payload,
+      createdAt: DateTime.now(),
+      status: 'sent',
+    );
+
+    for (final transport in routes) {
       try {
-        final reactionJson = jsonEncode({
-          'type': 'REACTION',
-          'targetMessageId': messageId,
-          'emoji': emoji,
-          'senderId': myId,
-        });
-        await sendMessage(peerOfflineMeshId, reactionJson);
+        if (transport == TransportType.WIFI_LAN) {
+          final peer = _activePeers.firstWhere((p) => p.offlineMeshId == peerOfflineMeshId && p.isReachable);
+          await wifiMessagingService.sendMessage(peer, reactionMsg);
+          return;
+        } else if (transport == TransportType.INTERNET) {
+          await messageService.sendMessage(peerOfflineMeshId, payload);
+          return;
+        }
       } catch (e) {
-        debugPrint('Could not transmit reaction over wire: $e');
+        debugPrint('Failed to send reaction via $transport: $e');
       }
     }
   }
@@ -506,73 +596,187 @@ class RoutingService {
   Future<void> flushOutbox() async {
     if (_isFlushingOutbox) return;
     _isFlushingOutbox = true;
+
     try {
-      final queuedItems = await localStorageService.loadOutbox();
-      for (final item in queuedItems) {
-        final recipientId = item['recipientOfflineMeshId'] as String?;
-        final messageId = item['messageId'] as String?;
-        final wireContent = item['wireContent'] as String?;
-        final rawMsg = item['message'] as Map<String, dynamic>?;
-        if (recipientId == null || messageId == null || wireContent == null || rawMsg == null) continue;
+      final queued = await localStorageService.loadOutbox();
+      if (queued.isNotEmpty) {
+        for (final item in queued) {
+          final messageId = item['messageId'] as String;
+          final recipientId = item['recipientOfflineMeshId'] as String;
+          final rawMsg = item['message'] as Map<String, dynamic>;
 
-        final routes = await getAvailableRoutes(recipientId);
-        if (routes.isEmpty) continue;
+          final int retryCount = item['retryCount'] is int ? item['retryCount'] as int : 0;
+          final DateTime queuedAt = DateTime.tryParse(item['queuedAt']?.toString() ?? '') ?? DateTime.now();
 
-        final wireMessage = Message(
-          id: messageId,
-          senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
-          content: wireContent,
-          createdAt: DateTime.tryParse(rawMsg['createdAt'] ?? '') ?? DateTime.now(),
-          status: 'sending',
-        );
+          // If reached max retries (10) or queued longer than 7 days, transition to failed
+          if (retryCount >= 10 || DateTime.now().difference(queuedAt).inDays >= 7) {
+            debugPrint('Outbox message $messageId reached max retries ($retryCount) or expired; marking failed.');
+            await localStorageService.removeFromOutbox(messageId);
+            final failedMsg = Message.fromJson(rawMsg).copyWith(status: 'failed');
+            await localStorageService.saveMessage(recipientId, failedMsg);
+            _incomingMessagesController.add(failedMsg);
+            continue;
+          }
 
-        bool sent = false;
-        Message? serverMessage;
-        for (final transport in routes) {
-          try {
-            wireMessage.transport = transport;
-            switch (transport) {
-              case TransportType.WIFI_LAN:
-                final peer = _activePeers.firstWhere((p) => p.offlineMeshId == recipientId && p.isReachable);
-                await wifiMessagingService.sendMessage(peer, wireMessage);
-                sent = true;
-                break;
-              case TransportType.BLUETOOTH:
-                await bluetoothMessagingService.sendMessage(recipientId, wireMessage);
-                sent = true;
-                break;
-              case TransportType.BLE:
-                await bleMessagingService!.sendMessage(recipientId, wireMessage);
-                sent = true;
-                break;
-              case TransportType.INTERNET:
-                serverMessage = await messageService.sendMessage(recipientId, wireContent);
-                sent = true;
-                break;
+          final routes = await getAvailableRoutes(recipientId);
+          if (routes.isEmpty) {
+            continue;
+          }
+
+          String wireContent = rawMsg['content'] ?? '';
+          if (encryptionService != null && !EncryptedEnvelope.isEncryptedEnvelope(wireContent)) {
+            try {
+              final envelope = await encryptionService!.encryptMessage(
+                recipientOfflineMeshId: recipientId,
+                messageId: messageId,
+                plaintext: wireContent,
+              );
+              wireContent = envelope.toJsonString();
+            } catch (e) {
+              debugPrint('Failed to encrypt queued message for $recipientId: $e');
+              await localStorageService.updateOutboxItem(
+                messageId,
+                retryCount: retryCount + 1,
+                lastError: 'Encryption failed: $e',
+              );
+              continue;
             }
-            if (sent) {
-              await localStorageService.removeFromOutbox(messageId);
-              final updated = Message.fromJson(rawMsg).copyWith(
-                id: serverMessage?.id, createdAt: serverMessage?.createdAt,
-                status: 'sent', transport: transport);
-              if (serverMessage != null) {
-                await encryptionService?.cacheSentMessage(serverMessage.id, updated.content);
-                await localStorageService.removeMessage(recipientId, messageId);
+          }
+
+          final wireMessage = Message(
+            id: messageId,
+            senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+            content: wireContent,
+            createdAt: DateTime.tryParse(rawMsg['createdAt'] ?? '') ?? DateTime.now(),
+            status: 'sending',
+          );
+
+          bool sent = false;
+          Message? serverMessage;
+          for (final transport in routes) {
+            try {
+              wireMessage.transport = transport;
+              switch (transport) {
+                case TransportType.WIFI_LAN:
+                  final peer = _activePeers.firstWhere((p) => p.offlineMeshId == recipientId && p.isReachable);
+                  await wifiMessagingService.sendMessage(peer, wireMessage);
+                  sent = true;
+                  break;
+                case TransportType.INTERNET:
+                  serverMessage = await messageService.sendMessage(recipientId, wireContent);
+                  sent = true;
+                  break;
               }
-              await localStorageService.saveMessage(recipientId, updated);
-              _incomingMessagesController.add(updated);
-              debugPrint('Successfully flushed queued message $messageId via $transport');
-              break;
+              if (sent) {
+                await localStorageService.removeFromOutbox(messageId);
+                final updated = Message.fromJson(rawMsg).copyWith(
+                  id: serverMessage?.id,
+                  createdAt: serverMessage?.createdAt,
+                  status: 'sent',
+                  transport: transport,
+                );
+                if (serverMessage != null) {
+                  await encryptionService?.cacheSentMessage(serverMessage.id, updated.content);
+                  await localStorageService.removeMessage(recipientId, messageId);
+                }
+                await localStorageService.saveMessage(recipientId, updated);
+                _incomingMessagesController.add(updated);
+                debugPrint('Successfully flushed queued message $messageId via $transport');
+                break;
+              }
+            } catch (e) {
+              debugPrint('Failed to flush message $messageId via $transport: $e');
             }
-          } catch (e) {
-            debugPrint('Failed to flush message $messageId via $transport: $e');
+          }
+
+          if (!sent) {
+            await localStorageService.updateOutboxItem(
+              messageId,
+              retryCount: retryCount + 1,
+              lastError: 'All available routes failed to send',
+            );
           }
         }
       }
+
+      // Flush store-and-forward relay buffer for reachable mesh peers
+      await _flushRelayBuffer();
     } catch (e) {
       debugPrint('Error during outbox flush: $e');
     } finally {
       _isFlushingOutbox = false;
+    }
+  }
+
+  /// Store-and-forward handler when a mesh packet arrives destined for another peer
+  Future<void> handleRelayedPacket(Map<String, dynamic> payload) async {
+    try {
+      final packetId = payload['message']?['id']?.toString() ??
+          payload['packetId']?.toString() ??
+          payload['id']?.toString() ??
+          '';
+
+      if (packetId.isNotEmpty) {
+        if (await localStorageService.hasMessageBeenProcessed(packetId)) {
+          debugPrint('Dropping already processed/relayed mesh packet: $packetId');
+          return;
+        }
+        await localStorageService.markMessageProcessed(packetId);
+      }
+
+      final recipientId = payload['recipientOfflineMeshId']?.toString() ?? '';
+      if (recipientId.isEmpty) return;
+
+      final hopCount = (payload['hopCount'] as int? ?? 1);
+      final maxHops = (payload['maxHops'] as int? ?? 3);
+
+      if (hopCount >= maxHops) {
+        debugPrint('Dropping mesh packet $packetId: max hop count ($maxHops) reached.');
+        return;
+      }
+
+      payload['hopCount'] = hopCount + 1;
+
+      // Check if recipient is directly reachable on local Wi-Fi LAN
+      final peer = _activePeers.where((p) => p.offlineMeshId == recipientId && p.isReachable).firstOrNull;
+      if (peer != null) {
+        debugPrint('Next-hop peer available for $recipientId; forwarding mesh packet $packetId over Wi-Fi.');
+        await wifiMessagingService.sendRelayPacket(peer, payload);
+      } else {
+        debugPrint('Recipient $recipientId not yet reachable; storing mesh packet $packetId in relay buffer.');
+        await localStorageService.addToRelayBuffer(payload);
+      }
+    } catch (e) {
+      debugPrint('Error handling relayed mesh packet: $e');
+    }
+  }
+
+  Future<void> _flushRelayBuffer() async {
+    try {
+      await localStorageService.pruneExpiredRelayPackets(maxAge: const Duration(hours: 24));
+      final relayItems = await localStorageService.loadRelayBuffer();
+      if (relayItems.isEmpty) return;
+
+      for (final item in relayItems) {
+        final recipientId = item['recipientOfflineMeshId']?.toString() ?? '';
+        final packetId = item['packetId']?.toString() ?? '';
+        final packet = Map<String, dynamic>.from(item['packet'] as Map? ?? {});
+
+        if (recipientId.isNotEmpty) {
+          final peer = _activePeers.where((p) => p.offlineMeshId == recipientId && p.isReachable).firstOrNull;
+          if (peer != null) {
+            try {
+              debugPrint('Flushing buffered relay packet $packetId to $recipientId');
+              await wifiMessagingService.sendRelayPacket(peer, packet);
+              await localStorageService.removeFromRelayBuffer(packetId);
+            } catch (e) {
+              debugPrint('Failed to forward buffered relay packet to $recipientId: $e');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error flushing relay buffer: $e');
     }
   }
 
@@ -651,19 +855,7 @@ class RoutingService {
         }
       }
 
-      // 2. BLUETOOTH transfer
-      try {
-        await bluetoothFileTransferService.sendFile(recipientOfflineMeshId, localMetadata, fileToSend, onProgress);
-        localMetadata.transport = 'BLUETOOTH';
-        _localSentFiles.removeWhere((f) => f.id == localMetadata.id);
-        _localSentFiles.add(localMetadata);
-        await localStorageService.saveSentFile(localMetadata);
-        return localMetadata;
-      } catch (e) {
-        debugPrint('BLUETOOTH file send failed or unavailable: $e');
-      }
-
-      // 3. Fallback INTERNET transfer
+      // 2. Fallback INTERNET transfer
       final backendMetadata = await fileService.createMetadata(
         recipientOfflineMeshId: recipientOfflineMeshId,
         originalFileName: fileName,
@@ -688,6 +880,65 @@ class RoutingService {
         } catch (_) {}
       }
     }
+  }
+
+  /// Sends a rich media message (image, video, voice note, or document)
+  /// using end-to-end encryption, LAN direct peer transfer, or Internet fallback.
+  Future<Message> sendMediaMessage({
+    required String recipientOfflineMeshId,
+    required File file,
+    required String mediaType, // 'image', 'video', 'audio', 'file'
+    String? customFileName,
+    int? durationMs,
+    Function(double)? onProgress,
+  }) async {
+    final fileName = customFileName ?? p.basename(file.path);
+    final ext = fileName.split('.').last.toLowerCase();
+    String contentType = '*/*';
+    if (mediaType == 'image') {
+      contentType = 'image/$ext';
+    } else if (mediaType == 'video') {
+      contentType = 'video/$ext';
+    } else if (mediaType == 'audio') {
+      contentType = 'audio/$ext';
+    }
+
+    final fileSize = await file.length();
+    final fileBytes = await file.readAsBytes();
+    final fileHash = sha256.convert(fileBytes).toString();
+
+    // 1. Send file via existing multi-transport router (LAN direct -> Internet fallback)
+    final fileMeta = await sendFile(
+      recipientOfflineMeshId,
+      fileName,
+      contentType,
+      fileSize,
+      file,
+      onProgress ?? (_) {},
+    );
+
+    // 2. Create local Message representation
+    final myId = wifiMessagingService.currentUser.offlineMeshId;
+    final message = Message(
+      id: fileMeta.id,
+      senderOfflineMeshId: myId,
+      recipientOfflineMeshId: recipientOfflineMeshId,
+      content: fileName,
+      createdAt: DateTime.now(),
+      status: 'sent',
+      transport: fileMeta.transport == 'WIFI_LAN' ? TransportType.WIFI_LAN : TransportType.INTERNET,
+      mediaType: mediaType,
+      mediaPath: file.path,
+      fileName: fileName,
+      fileSize: fileSize,
+      durationMs: durationMs,
+      fileHash: fileHash,
+    );
+
+    // 3. Save to local storage for this conversation
+    await localStorageService.saveMessage(recipientOfflineMeshId, message);
+
+    return message;
   }
   
   Future<List<FileMetadata>> getCombinedSentFiles() async {
@@ -736,5 +987,150 @@ class RoutingService {
     final allFiles = fileMap.values.toList();
     allFiles.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return allFiles;
+  }
+
+  /// Sends a read receipt for all unread messages received from this peer
+  Future<void> sendReadReceipt(String peerOfflineMeshId) async {
+    final myId = wifiMessagingService.currentUser.offlineMeshId;
+    await localStorageService.markConversationAsRead(peerOfflineMeshId, myId);
+
+    final routes = await getAvailableRoutes(peerOfflineMeshId);
+    final payload = jsonEncode({
+      'type': 'READ_RECEIPT',
+      'readerId': myId,
+    });
+    final receiptMsg = Message(
+      id: 'receipt_${DateTime.now().millisecondsSinceEpoch}',
+      senderOfflineMeshId: myId,
+      recipientOfflineMeshId: peerOfflineMeshId,
+      content: payload,
+      createdAt: DateTime.now(),
+      status: 'sent',
+    );
+
+    for (final transport in routes) {
+      try {
+        if (transport == TransportType.WIFI_LAN) {
+          final peer = _activePeers.firstWhere((p) => p.offlineMeshId == peerOfflineMeshId && p.isReachable);
+          await wifiMessagingService.sendMessage(peer, receiptMsg);
+          return;
+        } else if (transport == TransportType.INTERNET) {
+          await messageService.markMessagesAsRead(peerOfflineMeshId);
+          return;
+        }
+      } catch (e) {
+        debugPrint('Failed to send read receipt via $transport: $e');
+      }
+    }
+  }
+
+  /// Edits an existing sent message and propagates the change to recipient
+  Future<void> editMessage({
+    required String peerOfflineMeshId,
+    required String messageId,
+    required String newContent,
+  }) async {
+    await localStorageService.updateMessageContent(
+      peerOfflineMeshId,
+      messageId,
+      newContent,
+      isEdited: true,
+    );
+
+    final msgs = await localStorageService.loadConversation(peerOfflineMeshId);
+    final idx = msgs.indexWhere((m) => m.id == messageId);
+    if (idx != -1) {
+      _incomingMessagesController.add(msgs[idx]);
+    }
+
+    final routes = await getAvailableRoutes(peerOfflineMeshId);
+    for (final transport in routes) {
+      try {
+        if (transport == TransportType.WIFI_LAN) {
+          final peer = _activePeers.firstWhere((p) => p.offlineMeshId == peerOfflineMeshId && p.isReachable);
+          final payload = jsonEncode({
+            'type': 'EDIT_MESSAGE',
+            'messageId': messageId,
+            'newContent': newContent,
+          });
+          final editMsg = Message(
+            id: 'edit_${DateTime.now().millisecondsSinceEpoch}',
+            senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+            recipientOfflineMeshId: peerOfflineMeshId,
+            content: payload,
+            createdAt: DateTime.now(),
+            status: 'sent',
+          );
+          await wifiMessagingService.sendMessage(peer, editMsg);
+          return;
+        } else if (transport == TransportType.INTERNET) {
+          await messageService.editMessage(messageId, newContent);
+          return;
+        }
+      } catch (e) {
+        debugPrint('Failed to send edit via $transport: $e');
+      }
+    }
+  }
+
+  /// Deletes a message for everyone (replaces content with deletion marker)
+  Future<void> deleteMessageForEveryone({
+    required String peerOfflineMeshId,
+    required String messageId,
+  }) async {
+    const deletedText = '🚫 This message was deleted';
+    await localStorageService.updateMessageContent(
+      peerOfflineMeshId,
+      messageId,
+      deletedText,
+      isDeleted: true,
+    );
+
+    final msgs = await localStorageService.loadConversation(peerOfflineMeshId);
+    final idx = msgs.indexWhere((m) => m.id == messageId);
+    if (idx != -1) {
+      _incomingMessagesController.add(msgs[idx]);
+    }
+
+    final routes = await getAvailableRoutes(peerOfflineMeshId);
+    for (final transport in routes) {
+      try {
+        if (transport == TransportType.WIFI_LAN) {
+          final peer = _activePeers.firstWhere((p) => p.offlineMeshId == peerOfflineMeshId && p.isReachable);
+          final payload = jsonEncode({
+            'type': 'DELETE_MESSAGE',
+            'messageId': messageId,
+          });
+          final delMsg = Message(
+            id: 'delete_${DateTime.now().millisecondsSinceEpoch}',
+            senderOfflineMeshId: wifiMessagingService.currentUser.offlineMeshId,
+            recipientOfflineMeshId: peerOfflineMeshId,
+            content: payload,
+            createdAt: DateTime.now(),
+            status: 'sent',
+          );
+          await wifiMessagingService.sendMessage(peer, delMsg);
+          return;
+        } else if (transport == TransportType.INTERNET) {
+          await messageService.deleteMessageForEveryone(messageId);
+          return;
+        }
+      } catch (e) {
+        debugPrint('Failed to send delete-for-everyone via $transport: $e');
+      }
+    }
+  }
+
+  void dispose() {
+    _outboxRetryTimer?.cancel();
+    _peersSubscription?.cancel();
+    _wifiMessagesSubscription?.cancel();
+    _relayedPacketsSubscription?.cancel();
+    _connectionStateSubscription?.cancel();
+    _internetMessagesSubscription?.cancel();
+    _statusUpdatesSubscription?.cancel();
+    _wifiFilesSubscription?.cancel();
+    _incomingMessagesController.close();
+    _incomingFilesController.close();
   }
 }

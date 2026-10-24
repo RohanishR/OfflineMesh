@@ -155,7 +155,8 @@ class _FileListScreenState extends State<FileListScreen> {
         if (picked.path == null) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cannot read file from device storage')),
+            const SnackBar(
+                content: Text('Cannot read file from device storage')),
           );
           return;
         }
@@ -199,13 +200,17 @@ class _FileListScreenState extends State<FileListScreen> {
             SnackBar(content: Text('Send failed: $e')),
           );
         } finally {
-          if (mounted) setState(() {
-            _isUploading = false;
-          });
+          if (mounted) {
+            setState(() {
+              _isUploading = false;
+            });
+          }
         }
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
@@ -228,26 +233,64 @@ class _FileListScreenState extends State<FileListScreen> {
         ],
         floatingActionButton: widget.friendService == null
             ? null
-            : FloatingActionButton(
+            : FloatingActionButton.extended(
                 tooltip: 'Send a file',
+                label: const Text('Send file'),
                 onPressed: _isUploading ? null : _pickAndUploadFile,
-                child: const Icon(Icons.upload_file_rounded)),
+                icon: const Icon(Icons.upload_file_rounded)),
         child: Column(children: [
-          MeshSearch(
-              hint: 'Search files',
-              onChanged: (v) => setState(() => _query = v.toLowerCase())),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            child: GlassSurface(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: TextField(
+                onChanged: (v) => setState(() => _query = v.toLowerCase()),
+                decoration: const InputDecoration(
+                  hintText: 'Search files',
+                  prefixIcon: Icon(Icons.search_rounded),
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                ),
+              ),
+            ),
+          ),
           Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Row(children: [
                 Expanded(
                     child: SegmentedButton<bool>(
+                        showSelectedIcon: false,
+                        style: ButtonStyle(
+                          minimumSize:
+                              const WidgetStatePropertyAll(Size(48, 48)),
+                          side: WidgetStatePropertyAll(BorderSide(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .outlineVariant)),
+                          backgroundColor: WidgetStateProperty.resolveWith(
+                              (states) => states.contains(WidgetState.selected)
+                                  ? MeshColors.navy
+                                  : Theme.of(context).colorScheme.surface),
+                          foregroundColor: WidgetStateProperty.resolveWith(
+                              (states) => states.contains(WidgetState.selected)
+                                  ? Colors.white
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant),
+                        ),
                         segments: const [
-                      ButtonSegment(value: false, label: Text('Received')),
-                      ButtonSegment(value: true, label: Text('Sent'))
-                    ],
-                        selected: {
-                      _showSent
-                    },
+                          ButtonSegment(
+                              value: false,
+                              icon: Icon(Icons.south_west_rounded),
+                              label: Text('Received')),
+                          ButtonSegment(
+                              value: true,
+                              icon: Icon(Icons.north_east_rounded),
+                              label: Text('Sent'))
+                        ],
+                        selected: {_showSent},
                         onSelectionChanged: (v) {
                           _showSent = v.first;
                           _loadFiles();
@@ -261,6 +304,17 @@ class _FileListScreenState extends State<FileListScreen> {
                       .map((filter) => Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
+                              showCheckmark: false,
+                              selectedColor: MeshColors.navy,
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.surface,
+                              labelStyle: TextStyle(
+                                  color: _filter == filter
+                                      ? Colors.white
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant),
+                              shape: const StadiumBorder(),
                               label: Text(filter),
                               selected: _filter == filter,
                               onSelected: (_) =>
@@ -282,15 +336,17 @@ class _FileListScreenState extends State<FileListScreen> {
               child: FutureBuilder<List<FileMetadata>>(
                   future: futureFiles,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting)
+                    if (snapshot.connectionState == ConnectionState.waiting) {
                       return const LoadingStateView();
-                    if (snapshot.hasError)
+                    }
+                    if (snapshot.hasError) {
                       return EmptyStateView(
                           icon: Icons.cloud_off_outlined,
                           title: 'Files unavailable',
                           message:
                               'Check your connection and refresh your files.',
                           onAction: _loadFiles);
+                    }
                     final files = (snapshot.data ?? [])
                         .where((f) =>
                             f.originalFileName.toLowerCase().contains(_query) &&
@@ -299,7 +355,7 @@ class _FileListScreenState extends State<FileListScreen> {
                                     ? f.contentType.startsWith('image/')
                                     : !f.contentType.startsWith('image/'))))
                         .toList();
-                    if (files.isEmpty)
+                    if (files.isEmpty) {
                       return EmptyStateView(
                           icon: Icons.folder_open_rounded,
                           title: _query.isEmpty && _filter == 'All'
@@ -308,6 +364,7 @@ class _FileListScreenState extends State<FileListScreen> {
                           message: _showSent
                               ? 'Files you send will appear here.'
                               : 'Received files will appear here when available.');
+                    }
                     return RefreshIndicator(
                         onRefresh: () async {
                           _loadFiles();
@@ -325,23 +382,33 @@ class _FileListScreenState extends State<FileListScreen> {
                               return GlassSurface(
                                   padding: EdgeInsets.zero,
                                   child: ListTile(
-                                    contentPadding: const EdgeInsets.all(16),
-                                    leading: (file.contentType.startsWith('image/') &&
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 8),
+                                    leading: (file.contentType
+                                                .startsWith('image/') &&
                                             file.localFilePath != null &&
-                                            File(file.localFilePath!).existsSync())
+                                            File(file.localFilePath!)
+                                                .existsSync())
                                         ? ClipRRect(
-                                            borderRadius: BorderRadius.circular(14),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
                                             child: Image.file(
                                               File(file.localFilePath!),
                                               width: 48,
                                               height: 48,
                                               fit: BoxFit.cover,
-                                              errorBuilder: (_, __, ___) => Container(
-                                                padding: const EdgeInsets.all(12),
+                                              errorBuilder: (_, __, ___) =>
+                                                  Container(
+                                                padding:
+                                                    const EdgeInsets.all(12),
                                                 decoration: BoxDecoration(
-                                                    color: MeshColors.blue.withValues(alpha: .12),
-                                                    borderRadius: BorderRadius.circular(16)),
-                                                child: const Icon(Icons.image_outlined),
+                                                    color: MeshColors.blue
+                                                        .withValues(alpha: .12),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            16)),
+                                                child: const Icon(
+                                                    Icons.image_outlined),
                                               ),
                                             ),
                                           )
@@ -356,14 +423,60 @@ class _FileListScreenState extends State<FileListScreen> {
                                                     .startsWith('image/')
                                                 ? Icons.image_outlined
                                                 : Icons.description_outlined)),
-                                    title: Text(file.originalFileName,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium),
-                                    subtitle: Text(
-                                        '${_size(file.fileSize)} · ${date.day}/${date.month}/${date.year}\n${file.status}${file.transport == null ? '' : ' · ${file.transport}'}'),
+                                    title: Tooltip(
+                                      message: file.originalFileName,
+                                      child: Text(file.originalFileName,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleSmall),
+                                    ),
+                                    subtitle: Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                              '${_size(file.fileSize)} · ${date.day}/${date.month}/${date.year}',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall),
+                                          const SizedBox(height: 8),
+                                          Wrap(
+                                              spacing: 6,
+                                              runSpacing: 4,
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 3),
+                                                  decoration: BoxDecoration(
+                                                    color: MeshColors.blue
+                                                        .withValues(alpha: .14),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
+                                                  ),
+                                                  child: Text(
+                                                      file.status
+                                                          .replaceAll('_', ' ')
+                                                          .toLowerCase(),
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .labelSmall),
+                                                ),
+                                                if (file.transport != null)
+                                                  Text(file.transport!,
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .labelSmall),
+                                              ]),
+                                        ],
+                                      ),
+                                    ),
                                     trailing:
                                         const Icon(Icons.chevron_right_rounded),
                                     onTap: () => Navigator.push(

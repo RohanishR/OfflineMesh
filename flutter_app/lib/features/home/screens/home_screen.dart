@@ -6,14 +6,9 @@ import '../../../core/services/friend_service.dart';
 import '../../../core/services/message_service.dart';
 import '../../../core/services/user_service.dart';
 import '../../../core/services/wifi_messaging_service.dart';
-import '../../../core/services/bluetooth_messaging_service.dart';
 import '../../../core/services/wifi_file_transfer_service.dart';
-import '../../../core/services/bluetooth_file_transfer_service.dart';
-import '../../../core/services/ble_discovery_service.dart';
-import '../../../core/services/ble_messaging_service.dart';
 import '../../../core/services/routing_service.dart';
 import '../../../core/services/wifi_peer_discovery_service.dart';
-import '../../../core/services/bluetooth_discovery_service.dart';
 import '../../../core/services/webrtc_signaling_service.dart';
 import '../../../core/services/call_service.dart';
 import '../../call/screens/call_screen.dart';
@@ -24,7 +19,7 @@ import '../../files/screens/file_list_screen.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../friends/screens/friends_list_screen.dart';
 import '../../chat/screens/chat_list_screen.dart';
-import '../../discovery/screens/nearby_devices_screen.dart';
+import '../../notes/screens/notes_screen.dart';
 import '../../../core/security/e2e_encryption_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -46,15 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
   late E2eEncryptionService _e2eEncryptionService;
 
   late WifiPeerDiscoveryService _discoveryService;
-  late BluetoothDiscoveryService _bluetoothDiscoveryService;
-
   late WifiMessagingService _wifiMessagingService;
-  late BluetoothMessagingService _bluetoothMessagingService;
-
   late WifiFileTransferService _wifiFileTransferService;
-  late BluetoothFileTransferService _bluetoothFileTransferService;
-  late BleDiscoveryService _bleDiscoveryService;
-  late BleMessagingService _bleMessagingService;
   late RoutingService _routingService;
   late WebRtcSignalingService _webrtcSignalingService;
   late CallService _callService;
@@ -75,7 +63,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _fileService = FileService(baseUrl: baseUrl, jwtToken: jwt);
 
     _discoveryService = WifiPeerDiscoveryService();
-    _bluetoothDiscoveryService = BluetoothDiscoveryService();
 
     _loadUser();
   }
@@ -108,29 +95,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _wifiMessagingService = WifiMessagingService(currentUser: user);
           _wifiMessagingService.initialize();
 
-          _bluetoothMessagingService = BluetoothMessagingService(
-            currentUser: user,
-            encryptionService: _e2eEncryptionService,
-          );
-          _bluetoothMessagingService.initialize();
-
           _wifiFileTransferService = WifiFileTransferService(currentUser: user);
           _wifiFileTransferService.initialize();
-
-          _bluetoothFileTransferService = BluetoothFileTransferService(
-            currentUser: user,
-            bluetoothMessagingService: _bluetoothMessagingService,
-          );
-          _bluetoothFileTransferService.initialize();
-
-          _bleDiscoveryService = BleDiscoveryService();
-          _bleDiscoveryService.initialize();
-
-          _bleMessagingService = BleMessagingService(
-            currentUser: user,
-            encryptionService: _e2eEncryptionService,
-          );
-          _bleMessagingService.initialize();
 
           _routingService = RoutingService(
             messageService: _messageService,
@@ -138,10 +104,6 @@ class _HomeScreenState extends State<HomeScreen> {
             wifiMessagingService: _wifiMessagingService,
             discoveryService: _discoveryService,
             wifiFileTransferService: _wifiFileTransferService,
-            bluetoothMessagingService: _bluetoothMessagingService,
-            bluetoothFileTransferService: _bluetoothFileTransferService,
-            bleDiscoveryService: _bleDiscoveryService,
-            bleMessagingService: _bleMessagingService,
             encryptionService: _e2eEncryptionService,
           );
           _routingService.initialize();
@@ -186,14 +148,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _discoveryService.stopDiscovery();
-    _bluetoothDiscoveryService.dispose();
     if (_currentUser != null) {
       _wifiMessagingService.shutdown();
-      _bluetoothMessagingService.shutdown();
       _wifiFileTransferService.shutdown();
-      _bluetoothFileTransferService.shutdown();
-      _bleDiscoveryService.shutdown();
-      _bleMessagingService.shutdown();
       _routingService.shutdown();
       _messageService.dispose();
       _webrtcSignalingService.dispose();
@@ -217,19 +174,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final screens = [
       ChatListScreen(
         friendService: _friendService,
-        messageService:
-            _messageService, // Legacy list screen, could be updated if needed
-        routingService:
-            _routingService, // Passing routing service to ChatListScreen
+        messageService: _messageService,
+        routingService: _routingService,
         callService: _callService,
       ),
       FriendsListScreen(friendService: _friendService),
-      NearbyDevicesScreen(
-        currentUser: _currentUser!,
-        discoveryService: _discoveryService,
-        bluetoothDiscoveryService: _bluetoothDiscoveryService,
-        bleDiscoveryService: _bleDiscoveryService,
-      ),
+      const NotesScreen(),
       FileListScreen(
           fileService: _fileService,
           routingService: _routingService,

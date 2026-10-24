@@ -202,13 +202,115 @@ public class MessageService {
 
         message = messageRepository.save(message);
 
+        return mapToResponse(message);
+    }
+
+    public MessageResponse mapToResponse(Message message) {
         return MessageResponse.builder()
                 .id(message.getId().toString())
                 .senderOfflineMeshId(message.getSender().getOfflineMeshId())
-                .recipientOfflineMeshId(message.getRecipient() != null ? message.getRecipient().getOfflineMeshId() : targetUser.getOfflineMeshId())
+                .recipientOfflineMeshId(message.getRecipient() != null ? message.getRecipient().getOfflineMeshId() : "")
                 .content(message.getContent())
                 .status(message.getStatus() != null ? message.getStatus().name() : "sent")
                 .createdAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : java.time.Instant.now().toString())
+                .isEdited(message.isEdited())
+                .isDeleted(message.isDeleted())
                 .build();
+    }
+
+    public List<com.offlinemesh.backend.dto.ConversationDTO> getConversations(User currentUser) {
+        List<Conversation> conversations = conversationRepository.findAllByUser(currentUser);
+        List<com.offlinemesh.backend.dto.ConversationDTO> list = new java.util.ArrayList<>();
+
+        for (Conversation conv : conversations) {
+            User otherUser = conv.getUser1().getId().equals(currentUser.getId()) ? conv.getUser2() : conv.getUser1();
+            Optional<Message> lastMsgOpt = messageRepository.findFirstByConversationOrderByCreatedAtDesc(conv);
+            long unread = messageRepository.countByConversationAndRecipientAndStatusNot(
+                    conv, currentUser, com.offlinemesh.backend.entity.enums.MessageStatus.READ);
+
+            com.offlinemesh.backend.dto.ConversationDTO.ConversationDTOBuilder builder = com.offlinemesh.backend.dto.ConversationDTO.builder()
+                    .conversationId(conv.getId().toString())
+                    .otherOfflineMeshId(otherUser.getOfflineMeshId())
+                    .otherUsername(otherUser.getUsername())
+                    .unreadCount(unread);
+
+            if (lastMsgOpt.isPresent()) {
+                Message last = lastMsgOpt.get();
+                boolean fromMe = last.getSender().getId().equals(currentUser.getId());
+                builder.lastMessage(last.isDeleted() ? "This message was deleted" : (last.getContent() != null ? last.getContent() : ""))
+                        .lastMessageSenderId(last.getSender().getOfflineMeshId())
+                        .lastMessageStatus(last.getStatus() != null ? last.getStatus().name() : "SENT")
+                        .lastMessageType(last.getMessageType() != null ? last.getMessageType().name() : "TEXT")
+                        .lastMessageTime(last.getCreatedAt() != null ? last.getCreatedAt().toString() : "")
+                        .isLastMessageFromMe(fromMe)
+                        .isLastMessageEdited(last.isEdited())
+                        .isLastMessageDeleted(last.isDeleted());
+            } else {
+                builder.lastMessage("")
+                        .lastMessageTime("")
+                        .lastMessageStatus("")
+                        .lastMessageType("TEXT");
+            }
+            list.add(builder.build());
+        }
+
+        // Sort descending by last message time
+        list.sort((a, b) -> {
+            if (a.getLastMessageTime().isEmpty()) return 1;
+            if (b.getLastMessageTime().isEmpty()) return -1;
+            return b.getLastMessageTime().compareTo(a.getLastMessageTime());
+        });
+
+        return list;
+    }
+
+    @Transactional
+    public MessageResponse editMessage(User currentUser, java.util.UUID messageId, String newContent) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("Message not found"));
+
+        if (!message.getSender().getId().equals(currentUser.getId())) {
+            throw new com.offlinemesh.backend.exception.UnauthorizedMessagingException("Only the sender can edit this message");
+        }
+        if (message.isDeleted()) {
+            throw new IllegalStateException("Cannot edit a deleted message");
+        }
+
+        message.setContent(newContent);
+        message.setEdited(true);
+        message.setUpdatedAt(java.time.Instant.now());
+        message = messageRepository.save(message);
+
+        return mapToResponse(message);
+    }
+
+    @Transactional
+    public MessageResponse deleteMessageForEveryone(User currentUser, java.util.UUID messageId) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("Message not found"));
+
+        if (!message.getSender().getId().equals(currentUser.getId())) {
+            throw new com.offlinemesh.backend.exception.UnauthorizedMessagingException("Only the sender can delete this message for everyone");
+        }
+
+        message.setDeleted(true);
+        message.setContent("This message was deleted");
+        message.setUpdatedAt(java.time.Instant.now());
+        message = messageRepository.save(message);
+
+        return mapToResponse(message);
+    }
+
+    @Transactional
+    public int markMessagesAsRead(User currentUser, String senderOfflineMeshId) {
+        User sender = userService.getPublicProfile(senderOfflineMeshId);
+        List<Message> unread = messageRepository.findBySenderAndRecipientAndStatusNot(
+                sender, currentUser, com.offlinemesh.backend.entity.enums.MessageStatus.READ);
+
+        for (Message msg : unread) {
+            msg.setStatus(com.offlinemesh.backend.entity.enums.MessageStatus.READ);
+        }
+        messageRepository.saveAll(unread);
+        return unread.size();
     }
 }

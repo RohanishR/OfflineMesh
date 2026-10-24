@@ -24,7 +24,8 @@ class WebRtcSignalingService {
   });
 
   Future<void> connect() async {
-    final wsUrl = AppConfig.backendBaseUrl.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://') + '/ws';
+    final wsBase = AppConfig.backendBaseUrl.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://');
+    final wsUrl = '$wsBase/ws';
 
     _stompClient = StompClient(
       config: StompConfig(

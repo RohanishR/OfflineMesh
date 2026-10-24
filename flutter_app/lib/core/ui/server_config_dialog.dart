@@ -54,26 +54,34 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
             : 'Cannot reach this server. Use the PC address on the network your phone is connected to. Check Docker, port 8081, and firewall access.';
       });
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() => _testMessage =
             e is FormatException ? e.message : 'Connection test failed.');
+      }
     } finally {
-      if (mounted) setState(() => _isTesting = false);
+      if (mounted) {
+        setState(() => _isTesting = false);
+      }
     }
   }
 
   Future<void> _save() async {
     await _testConnection();
-    if (!mounted || _testSuccess != true) return;
+    if (!mounted || _testSuccess != true) {
+      return;
+    }
     try {
       await AppConfig.setBackendBaseUrl(_controller.text);
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       Navigator.of(context).pop();
       widget.onSaved?.call();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() =>
             _testMessage = 'Could not save the server address. Try again.');
+      }
     }
   }
 

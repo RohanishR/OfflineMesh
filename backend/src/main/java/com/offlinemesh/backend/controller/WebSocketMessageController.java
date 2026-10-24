@@ -105,6 +105,16 @@ public class WebSocketMessageController {
         );
     }
 
+    @MessageMapping("/presence/update")
+    public void updatePresence(@Payload com.offlinemesh.backend.dto.UserPresenceUpdate update, Principal principal) {
+        OfflineMeshPrincipal omPrincipal = extractPrincipal(principal);
+        if (omPrincipal != null) {
+            update.setOfflineMeshId(omPrincipal.getUser().getOfflineMeshId());
+            update.setLastSeen(java.time.Instant.now());
+            messagingTemplate.convertAndSend("/topic/presence", update);
+        }
+    }
+
     @MessageExceptionHandler
     @SendToUser("/queue/errors")
     public Map<String, String> handleException(Exception exception) {

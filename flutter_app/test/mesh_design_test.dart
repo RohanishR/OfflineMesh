@@ -23,6 +23,32 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets('Glass becomes opaque without a blur under reduced motion',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: MeshTheme.build(Brightness.dark),
+      home: const MediaQuery(
+        data: MediaQueryData(disableAnimations: true),
+        child: Scaffold(
+            body: GlassSurface(blur: true, child: Text('Real content'))),
+      ),
+    ));
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.text('Real content'), findsOneWidget);
+  });
+
+  test('Navigation spring stays bounded and reaches its destination', () {
+    const curve = MeshSpringCurve();
+    expect(curve.transform(0), 0);
+    expect(curve.transform(1), 1);
+    var previous = 0.0;
+    for (var i = 1; i <= 100; i++) {
+      final value = curve.transform(i / 100);
+      expect(value, inInclusiveRange(previous, 1.0));
+      previous = value;
+    }
+  });
+
   testWidgets('Appearance selection persists across a new controller',
       (tester) async {
     final controller = AppearanceController();
@@ -78,10 +104,10 @@ void main() {
 
   testWidgets('Reduced motion radar settles while discovery is active',
       (tester) async {
-    await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(const MaterialApp(
         home: MediaQuery(
-            data: const MediaQueryData(disableAnimations: true),
-            child: const Scaffold(body: DiscoveryRadar(scanning: true)))));
+            data: MediaQueryData(disableAnimations: true),
+            child: Scaffold(body: DiscoveryRadar(scanning: true)))));
     await tester.pumpAndSettle();
     expect(tester.binding.hasScheduledFrame, false);
     expect(tester.takeException(), isNull);

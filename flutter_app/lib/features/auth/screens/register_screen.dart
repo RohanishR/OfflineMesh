@@ -77,10 +77,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 context,
                 onSaved: () {
                   widget.authService.updateBaseUrl(AppConfig.backendBaseUrl);
-                  if (mounted)
+                  if (mounted) {
                     setState(() {
                       _errorMessage = null;
                     });
+                  }
                 },
               );
             },
@@ -139,10 +140,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   context,
                   onSaved: () {
                     widget.authService.updateBaseUrl(AppConfig.backendBaseUrl);
-                    if (mounted)
+                    if (mounted) {
                       setState(() {
                         _errorMessage = null;
                       });
+                    }
                   },
                 );
               },

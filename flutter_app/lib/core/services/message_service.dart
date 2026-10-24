@@ -12,6 +12,8 @@ import 'local_storage_service.dart';
 import '../security/e2e_encryption_service.dart';
 import '../security/encrypted_envelope.dart';
 import '../transport/transport_type.dart';
+import '../../features/chat/models/conversation_summary.dart';
+import 'presence_service.dart';
 
 class MessageService {
   final String baseUrl;
@@ -21,6 +23,21 @@ class MessageService {
   StompClient? _stompClient;
   final _incomingMessagesController = StreamController<Message>.broadcast();
   Stream<Message> get incomingMessages => _incomingMessagesController.stream;
+
+  final _statusUpdatesController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get statusUpdates => _statusUpdatesController.stream;
+
+  final _connectionStateController = StreamController<bool>.broadcast();
+  Stream<bool> get connectionStateStream => _connectionStateController.stream;
+
+  PresenceService? _presenceService;
+  PresenceService get presenceService {
+    _presenceService ??= PresenceService(
+      stompClient: _stompClient,
+      myOfflineMeshId: encryptionService?.localOfflineMeshId ?? '',
+    );
+    return _presenceService!;
+  }
 
   bool get isConnected => _stompClient?.connected ?? false;
 
@@ -36,13 +53,17 @@ class MessageService {
       };
 
   Future<void> connectStomp() async {
-    final wsUrl = baseUrl.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://') + '/ws';
+    final wsBase = baseUrl.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://');
+    final wsUrl = '$wsBase/ws';
 
     _stompClient = StompClient(
       config: StompConfig(
         url: wsUrl,
         onConnect: _onConnect,
-        onWebSocketError: (dynamic error) => debugPrint('Message STOMP WebSocket Error: $error'),
+        onWebSocketError: (dynamic error) {
+          debugPrint('Message STOMP WebSocket Error: $error');
+          _connectionStateController.add(false);
+        },
         stompConnectHeaders: {'Authorization': 'Bearer $jwtToken'},
         webSocketConnectHeaders: {'Authorization': 'Bearer $jwtToken'},
       ),
@@ -52,6 +73,7 @@ class MessageService {
 
   void _onConnect(StompFrame frame) {
     debugPrint('Connected to Message STOMP Server.');
+    _connectionStateController.add(true);
 
     _stompClient?.subscribe(
       destination: '/user/queue/messages',
@@ -75,6 +97,23 @@ class MessageService {
         }
       },
     );
+
+    _stompClient?.subscribe(
+      destination: '/user/queue/messages/status',
+      callback: (frame) {
+        if (frame.body != null) {
+          try {
+            final jsonMap = jsonDecode(frame.body!) as Map<String, dynamic>;
+            _statusUpdatesController.add(jsonMap);
+          } catch (e) {
+            debugPrint('Failed to parse status update: $e');
+          }
+        }
+      },
+    );
+
+    // Initialize Presence Service
+    presenceService.initialize(_stompClient);
 
     // Sync catch-up on connect
     syncPendingMessages();
@@ -134,11 +173,17 @@ class MessageService {
   void disconnectStomp() {
     _stompClient?.deactivate();
     _stompClient = null;
+    _connectionStateController.add(false);
   }
+
+  void disconnect() => disconnectStomp();
 
   void dispose() {
     disconnectStomp();
+    _presenceService?.dispose();
     _incomingMessagesController.close();
+    _statusUpdatesController.close();
+    _connectionStateController.close();
   }
 
   Future<List<Message>> getConversationHistory(String offlineMeshId) async {
@@ -235,6 +280,84 @@ class MessageService {
       return Message.fromJson(jsonDecode(response.body));
     } else {
       throw Exception('Failed to send message: ${response.body}');
+    }
+  }
+
+  Future<List<ConversationSummary>> getConversations() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/messages/conversations'),
+      headers: _headers,
+    );
+
+    if (response.statusCode == 200) {
+      final List<dynamic> list = jsonDecode(response.body);
+      final summaries = <ConversationSummary>[];
+
+      for (final item in list) {
+        final rawMap = item as Map<String, dynamic>;
+        String lastMsg = rawMap['lastMessage']?.toString() ?? '';
+
+        // If encrypted envelope, try to decrypt or check cached message
+        if (encryptionService != null && EncryptedEnvelope.isEncryptedEnvelope(lastMsg)) {
+          try {
+            final env = EncryptedEnvelope.fromJson(jsonDecode(lastMsg));
+            if (rawMap['isLastMessageFromMe'] == true) {
+              lastMsg = encryptionService!.getCachedSentMessage(env.messageId) ?? 'Sent message';
+            } else {
+              lastMsg = await encryptionService!.decryptMessage(env, checkReplay: false);
+            }
+          } catch (_) {
+            lastMsg = 'Encrypted message';
+          }
+        }
+
+        summaries.add(ConversationSummary.fromJson({
+          ...rawMap,
+          'lastMessage': lastMsg,
+        }));
+      }
+
+      return summaries;
+    } else {
+      throw Exception('Failed to load conversations: ${response.body}');
+    }
+  }
+
+  Future<Message> editMessage(String messageId, String newContent) async {
+    final response = await http.put(
+      Uri.parse('$baseUrl/api/messages/$messageId'),
+      headers: _headers,
+      body: jsonEncode({'content': newContent}),
+    );
+
+    if (response.statusCode == 200) {
+      return Message.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to edit message: ${response.body}');
+    }
+  }
+
+  Future<Message> deleteMessageForEveryone(String messageId) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/api/messages/$messageId'),
+      headers: _headers,
+    );
+
+    if (response.statusCode == 200) {
+      return Message.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to delete message: ${response.body}');
+    }
+  }
+
+  Future<void> markMessagesAsRead(String senderOfflineMeshId) async {
+    try {
+      await http.post(
+        Uri.parse('$baseUrl/api/messages/read/$senderOfflineMeshId'),
+        headers: _headers,
+      );
+    } catch (e) {
+      debugPrint('Failed to send read receipts: $e');
     }
   }
 }

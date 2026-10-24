@@ -59,11 +59,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       await AppearanceController.instance
                                           .select(option);
                                     } catch (_) {
-                                      if (context.mounted)
+                                      if (context.mounted) {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(const SnackBar(
                                                 content: Text(
                                                     'Couldn’t save appearance. Try again.')));
+                                      }
                                     }
                                   },
                                 ))
@@ -92,6 +93,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           GlassSurface(
               padding: EdgeInsets.zero,
               child: ListTile(
+                  leading: const Icon(Icons.cell_tower_rounded),
+                  title: const Text('STUN / TURN Calling Servers'),
+                  subtitle: const Text('WebRTC NAT traversal configuration'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _showIceServersDialog(context))),
+          const SizedBox(height: 20),
+          GlassSurface(
+              padding: EdgeInsets.zero,
+              child: ListTile(
                   leading: const Icon(Icons.logout_rounded),
                   title: const Text('Log out'),
                   subtitle: const Text('Sign out of this account'),
@@ -111,14 +121,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       onPressed: () => Navigator.pop(ctx, true),
                                       child: const Text('Log out'))
                                 ]));
-                    if (confirmed != true) return;
+                    if (confirmed != true) {
+                      return;
+                    }
                     await widget.authService.logout();
-                    if (context.mounted)
+                    if (context.mounted) {
                       Navigator.of(context).pushAndRemoveUntil(
                           MaterialPageRoute(
                               builder: (_) =>
                                   LoginScreen(authService: widget.authService)),
                           (route) => false);
+                    }
                   })),
           const SizedBox(height: 28),
           const Center(
@@ -133,4 +146,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: Theme.of(context).textTheme.bodySmall)),
         ]),
       );
+
+  Future<void> _showIceServersDialog(BuildContext context) async {
+    final currentServers = await AppConfig.getIceServers();
+    if (!context.mounted) return;
+
+    final controller = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) {
+          final isDefault = currentServers == AppConfig.defaultIceServers;
+
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.cell_tower_rounded, color: Colors.blueAccent),
+                SizedBox(width: 8),
+                Text('ICE Calling Servers', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'STUN and TURN servers help negotiate WebRTC audio and video calls across different networks and NAT firewalls.',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Active ICE Server URLs:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  ...currentServers.map((server) {
+                    final urls = server['urls'];
+                    final urlList = urls is List ? urls : [urls.toString()];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: urlList.map((u) => Text(
+                          u.toString(),
+                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                        )).toList(),
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(
+                      labelText: 'Add STUN/TURN URL',
+                      hintText: 'e.g. turn:myturn.example.com:3478',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              if (!isDefault)
+                TextButton(
+                  onPressed: () async {
+                    await AppConfig.setCustomIceServers(AppConfig.defaultIceServers);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  },
+                  child: const Text('Reset to Default', style: TextStyle(color: Colors.redAccent)),
+                ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final text = controller.text.trim();
+                  if (text.isNotEmpty) {
+                    final updated = List<Map<String, dynamic>>.from(currentServers)
+                      ..add({'urls': [text]});
+                    await AppConfig.setCustomIceServers(updated);
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }

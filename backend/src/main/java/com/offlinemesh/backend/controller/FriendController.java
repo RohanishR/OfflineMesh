@@ -23,6 +23,7 @@ public class FriendController {
 
     private final FriendshipService friendshipService;
     private final UserService userService;
+    private final com.offlinemesh.backend.service.BlockedUserService blockedUserService;
 
     @PostMapping("/connect")
     public ResponseEntity<?> connect(@RequestBody ConnectRequest request) {
@@ -90,5 +91,45 @@ public class FriendController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
         }
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/block/{offlineMeshId}")
+    public ResponseEntity<?> blockUser(@org.springframework.web.bind.annotation.PathVariable String offlineMeshId) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || authentication.getPrincipal().equals("anonymousUser")) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        User currentUser = userService.findByUsername(authentication.getName());
+        try {
+            blockedUserService.blockUser(currentUser, offlineMeshId);
+            return ResponseEntity.ok(java.util.Map.of("message", "User blocked successfully"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/block/{offlineMeshId}")
+    public ResponseEntity<?> unblockUser(@org.springframework.web.bind.annotation.PathVariable String offlineMeshId) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || authentication.getPrincipal().equals("anonymousUser")) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        User currentUser = userService.findByUsername(authentication.getName());
+        try {
+            blockedUserService.unblockUser(currentUser, offlineMeshId);
+            return ResponseEntity.ok(java.util.Map.of("message", "User unblocked successfully"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/blocked")
+    public ResponseEntity<java.util.List<PublicUserProfileResponse>> getBlockedUsers() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || authentication.getPrincipal().equals("anonymousUser")) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        User currentUser = userService.findByUsername(authentication.getName());
+        return ResponseEntity.ok(blockedUserService.getBlockedUsers(currentUser));
     }
 }

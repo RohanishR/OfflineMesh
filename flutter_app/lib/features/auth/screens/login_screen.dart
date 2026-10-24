@@ -157,10 +157,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       onSaved: () {
                         widget.authService
                             .updateBaseUrl(AppConfig.backendBaseUrl);
-                        if (mounted)
+                        if (mounted) {
                           setState(() {
                             _errorMessage = null;
                           });
+                        }
                       },
                     );
                   },

@@ -85,6 +85,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _rotateKey() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.refresh_rounded, color: MeshColors.orange),
+            SizedBox(width: 8),
+            Text('Rotate Identity Key?'),
+          ],
+        ),
+        content: const Text(
+          'Generating a new identity key will change your cryptographic safety number. '
+          'Your existing contacts will see a "Security Code Changed" notice on their next message.\n\n'
+          'Are you sure you want to rotate your key pair now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: MeshColors.orange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Rotate Key'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || _profile == null) return;
+
+    try {
+      final e2ee = E2eEncryptionService(
+        baseUrl: widget.authService.baseUrl,
+        jwtToken: widget.authService.jwtToken ?? '',
+        localOfflineMeshId: _profile!.offlineMeshId,
+      );
+      await e2ee.initialize();
+      final newFp = await e2ee.rotateIdentityKeyPair();
+      if (mounted) {
+        setState(() {
+          _fingerprint = newFp;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Identity key successfully rotated and registered.'),
+            backgroundColor: Color(0xFF25D366),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to rotate key: $e')),
+        );
+      }
+    }
+  }
+
   void _settings() => Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => SettingsScreen(authService: widget.authService)));
   @override
@@ -182,6 +242,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               Text(
                                   'Compare fingerprints with a friend through a trusted channel. A fingerprint alone does not verify a contact.',
                                   style: Theme.of(context).textTheme.bodySmall),
+                              const SizedBox(height: 16),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.sync_lock_rounded, size: 18),
+                                label: const Text('Rotate Identity Key Pair'),
+                                onPressed: _rotateKey,
+                              ),
                             ])),
                         const SizedBox(height: 16),
                         GlassSurface(

@@ -9,6 +9,8 @@ import '../../features/files/models/file_metadata.dart';
 class LocalStorageService {
   Directory? _documentsDir;
 
+  LocalStorageService({Directory? baseDir}) : _documentsDir = baseDir;
+
   Future<Directory> _getDir() async {
     _documentsDir ??= await getApplicationDocumentsDirectory();
     return _documentsDir!;
@@ -83,6 +85,138 @@ class LocalStorageService {
       await file.writeAsString(jsonStr, flush: true);
     } catch (e) {
       debugPrint('Error saving messages for $peerOfflineMeshId: $e');
+    }
+  }
+
+  Future<void> updateMessage(String peerOfflineMeshId, Message updatedMessage) async {
+    try {
+      final messages = await loadConversation(peerOfflineMeshId);
+      final index = messages.indexWhere((m) => m.id == updatedMessage.id);
+      if (index != -1) {
+        messages[index] = updatedMessage;
+      } else {
+        messages.add(updatedMessage);
+      }
+      messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final file = await _getConversationFile(peerOfflineMeshId);
+      await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+    } catch (e) {
+      debugPrint('Error updating message in $peerOfflineMeshId: $e');
+    }
+  }
+
+  Future<void> updateMessageContent(
+    String peerOfflineMeshId,
+    String messageId,
+    String newContent, {
+    bool isEdited = false,
+    bool isDeleted = false,
+  }) async {
+    try {
+      final messages = await loadConversation(peerOfflineMeshId);
+      final index = messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        messages[index] = messages[index].copyWith(
+          content: newContent,
+          isEdited: isEdited,
+          isDeleted: isDeleted,
+          editedAt: isEdited ? DateTime.now() : messages[index].editedAt,
+        );
+        final file = await _getConversationFile(peerOfflineMeshId);
+        await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+      }
+    } catch (e) {
+      debugPrint('Error updating message content in $peerOfflineMeshId: $e');
+    }
+  }
+
+  Future<void> markConversationAsRead(String peerOfflineMeshId, String myOfflineMeshId) async {
+    try {
+      final messages = await loadConversation(peerOfflineMeshId);
+      bool changed = false;
+      for (int i = 0; i < messages.length; i++) {
+        final m = messages[i];
+        if (m.senderOfflineMeshId == peerOfflineMeshId && m.status.toLowerCase() != 'read') {
+          messages[i] = m.copyWith(status: 'read');
+          changed = true;
+        }
+      }
+      if (changed) {
+        final file = await _getConversationFile(peerOfflineMeshId);
+        await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+      }
+    } catch (e) {
+      debugPrint('Error marking conversation as read: $e');
+    }
+  }
+
+  Future<List<String>> getAllConversationPeerIds() async {
+    try {
+      final dir = await _getDir();
+      final convDir = Directory(p.join(dir.path, 'conversations'));
+      if (!await convDir.exists()) return [];
+      final files = await convDir.list().toList();
+      final peerIds = <String>[];
+      for (var f in files) {
+        if (f is File && p.basename(f.path).startsWith('messages_') && f.path.endsWith('.json')) {
+          final raw = p.basenameWithoutExtension(f.path).replaceFirst('messages_', '');
+          peerIds.add(raw);
+        }
+      }
+      return peerIds;
+    } catch (e) {
+      debugPrint('Error listing conversation peer IDs: $e');
+      return [];
+    }
+  }
+
+  // --- Conversation Flags (Pinned, Archived, Muted) ---
+
+  Future<File> _getConversationFlagsFile() async {
+    final dir = await _getDir();
+    final convDir = Directory(p.join(dir.path, 'conversations'));
+    if (!await convDir.exists()) {
+      await convDir.create(recursive: true);
+    }
+    return File(p.join(convDir.path, 'conversation_flags.json'));
+  }
+
+  Future<Map<String, dynamic>> _loadAllFlags() async {
+    try {
+      final file = await _getConversationFlagsFile();
+      if (!await file.exists()) return {};
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return {};
+      return jsonDecode(content) as Map<String, dynamic>;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  Future<Map<String, bool>> getConversationFlags(String peerOfflineMeshId) async {
+    final all = await _loadAllFlags();
+    final item = all[_sanitizeId(peerOfflineMeshId)];
+    if (item is Map) {
+      return {
+        'pinned': item['pinned'] == true,
+        'archived': item['archived'] == true,
+        'muted': item['muted'] == true,
+      };
+    }
+    return {'pinned': false, 'archived': false, 'muted': false};
+  }
+
+  Future<void> setConversationFlag(String peerOfflineMeshId, String flag, bool value) async {
+    try {
+      final all = await _loadAllFlags();
+      final key = _sanitizeId(peerOfflineMeshId);
+      final current = Map<String, dynamic>.from(all[key] as Map? ?? {});
+      current[flag] = value;
+      all[key] = current;
+      final file = await _getConversationFlagsFile();
+      await file.writeAsString(jsonEncode(all), flush: true);
+    } catch (e) {
+      debugPrint('Error saving flag $flag for $peerOfflineMeshId: $e');
     }
   }
 
@@ -209,6 +343,207 @@ class LocalStorageService {
       await file.writeAsString(jsonEncode(outbox), flush: true);
     } catch (e) {
       debugPrint('Error removing from outbox: $e');
+    }
+  }
+
+  Future<void> updateOutboxItem(
+    String messageId, {
+    int? retryCount,
+    String? lastError,
+    String? status,
+  }) async {
+    try {
+      final file = await _getOutboxFile();
+      final outbox = await loadOutbox();
+      final index = outbox.indexWhere((item) => item['messageId'] == messageId);
+      if (index != -1) {
+        if (retryCount != null) {
+          outbox[index]['retryCount'] = retryCount;
+        }
+        if (lastError != null) {
+          outbox[index]['lastError'] = lastError;
+        }
+        if (status != null) {
+          outbox[index]['status'] = status;
+        }
+        outbox[index]['lastAttemptAt'] = DateTime.now().toIso8601String();
+        await file.writeAsString(jsonEncode(outbox), flush: true);
+      }
+    } catch (e) {
+      debugPrint('Error updating outbox item $messageId: $e');
+    }
+  }
+
+  // --- Persistent Deduplication Cache ---
+
+  Future<File> _getProcessedMessagesFile() async {
+    final dir = await _getDir();
+    final convDir = Directory(p.join(dir.path, 'conversations'));
+    if (!await convDir.exists()) {
+      await convDir.create(recursive: true);
+    }
+    return File(p.join(convDir.path, 'processed_messages.json'));
+  }
+
+  Future<Map<String, String>> _loadProcessedMessages() async {
+    try {
+      final file = await _getProcessedMessagesFile();
+      if (!await file.exists()) return {};
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return {};
+      final Map<String, dynamic> raw = jsonDecode(content);
+      final now = DateTime.now();
+
+      // Prune expired entries
+      final valid = <String, String>{};
+      for (final entry in raw.entries) {
+        final expiry = DateTime.tryParse(entry.value.toString());
+        if (expiry != null && expiry.isAfter(now)) {
+          valid[entry.key] = entry.value.toString();
+        }
+      }
+      return valid;
+    } catch (e) {
+      debugPrint('Error loading processed messages: $e');
+      return {};
+    }
+  }
+
+  Future<bool> hasMessageBeenProcessed(String messageId) async {
+    try {
+      final processed = await _loadProcessedMessages();
+      return processed.containsKey(messageId);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<void> markMessageProcessed(
+    String messageId, {
+    Duration expiry = const Duration(days: 7),
+  }) async {
+    try {
+      final processed = await _loadProcessedMessages();
+      final expiryTime = DateTime.now().add(expiry).toIso8601String();
+      processed[messageId] = expiryTime;
+
+      // Keep cache bounded to 2000 entries
+      if (processed.length > 2000) {
+        final keysToRemove = processed.keys.take(processed.length - 2000).toList();
+        for (final k in keysToRemove) {
+          processed.remove(k);
+        }
+      }
+
+      final file = await _getProcessedMessagesFile();
+      await file.writeAsString(jsonEncode(processed), flush: true);
+    } catch (e) {
+      debugPrint('Error marking message $messageId as processed: $e');
+    }
+  }
+
+  // --- Store-and-Forward Wi-Fi Relay Buffer ---
+
+  Future<File> _getRelayBufferFile() async {
+    final dir = await _getDir();
+    final outboxDir = Directory(p.join(dir.path, 'outbox'));
+    if (!await outboxDir.exists()) {
+      await outboxDir.create(recursive: true);
+    }
+    return File(p.join(outboxDir.path, 'relay_buffer.json'));
+  }
+
+  Future<List<Map<String, dynamic>>> loadRelayBuffer() async {
+    try {
+      final file = await _getRelayBufferFile();
+      if (!await file.exists()) return [];
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return [];
+      final List<dynamic> jsonList = jsonDecode(content);
+      return jsonList.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('Error loading relay buffer: $e');
+      return [];
+    }
+  }
+
+  Future<void> addToRelayBuffer(Map<String, dynamic> packet) async {
+    try {
+      final file = await _getRelayBufferFile();
+      final buffer = await loadRelayBuffer();
+
+      final packetId = packet['packetId']?.toString() ??
+          packet['message']?['id']?.toString() ??
+          packet['id']?.toString() ??
+          '';
+
+      if (packetId.isNotEmpty) {
+        buffer.removeWhere((item) {
+          final id = item['packetId']?.toString() ??
+              item['message']?['id']?.toString() ??
+              item['id']?.toString();
+          return id == packetId;
+        });
+      }
+
+      final relayItem = {
+        'packetId': packetId,
+        'recipientOfflineMeshId': packet['recipientOfflineMeshId'],
+        'senderOfflineMeshId': packet['senderOfflineMeshId'],
+        'packet': packet,
+        'hopCount': packet['hopCount'] ?? 1,
+        'bufferedAt': DateTime.now().toIso8601String(),
+      };
+
+      buffer.add(relayItem);
+
+      // Keep relay buffer bounded to 500 items max
+      if (buffer.length > 500) {
+        buffer.removeRange(0, buffer.length - 500);
+      }
+
+      await file.writeAsString(jsonEncode(buffer), flush: true);
+    } catch (e) {
+      debugPrint('Error adding to relay buffer: $e');
+    }
+  }
+
+  Future<void> removeFromRelayBuffer(String packetId) async {
+    try {
+      final file = await _getRelayBufferFile();
+      final buffer = await loadRelayBuffer();
+      buffer.removeWhere((item) {
+        final id = item['packetId']?.toString() ??
+            item['message']?['id']?.toString() ??
+            item['id']?.toString();
+        return id == packetId;
+      });
+      await file.writeAsString(jsonEncode(buffer), flush: true);
+    } catch (e) {
+      debugPrint('Error removing from relay buffer: $e');
+    }
+  }
+
+  Future<void> pruneExpiredRelayPackets({
+    Duration maxAge = const Duration(hours: 24),
+  }) async {
+    try {
+      final file = await _getRelayBufferFile();
+      final buffer = await loadRelayBuffer();
+      final now = DateTime.now();
+      final beforeCount = buffer.length;
+
+      buffer.removeWhere((item) {
+        final bufferedAt = DateTime.tryParse(item['bufferedAt']?.toString() ?? '');
+        if (bufferedAt == null) return false;
+        return now.difference(bufferedAt) > maxAge;
+      });
+
+      if (buffer.length != beforeCount) {
+        await file.writeAsString(jsonEncode(buffer), flush: true);
+      }
+    } catch (e) {
+      debugPrint('Error pruning relay buffer: $e');
     }
   }
 }
