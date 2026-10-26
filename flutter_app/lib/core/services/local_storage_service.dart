@@ -28,7 +28,8 @@ class LocalStorageService {
     if (!await convDir.exists()) {
       await convDir.create(recursive: true);
     }
-    return File(p.join(convDir.path, 'messages_${_sanitizeId(peerOfflineMeshId)}.json'));
+    return File(p.join(
+        convDir.path, 'messages_${_sanitizeId(peerOfflineMeshId)}.json'));
   }
 
   Future<List<Message>> loadConversation(String peerOfflineMeshId) async {
@@ -40,11 +41,79 @@ class LocalStorageService {
       final content = await file.readAsString();
       if (content.trim().isEmpty) return [];
       final List<dynamic> jsonList = jsonDecode(content);
-      final messages = jsonList
+      final rawMessages = jsonList
           .map((j) => Message.fromJson(Map<String, dynamic>.from(j)))
           .where((m) => m.content != '[Encrypted sent message]')
           .toList();
+
+      bool needsResave = false;
+      final Map<String, Message> messageMap = {};
+      final List<Map<String, dynamic>> reactionsToApply = [];
+
+      for (var msg in rawMessages) {
+        final trimmed = msg.content.trim();
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            final data = jsonDecode(trimmed);
+            if (data is Map && data['type'] == 'REACTION') {
+              reactionsToApply.add(Map<String, dynamic>.from(data));
+              needsResave = true;
+              continue; // Drop raw reaction message from chat bubbles
+            } else if (data is Map && data['type'] == 'MEDIA_MESSAGE') {
+              final fileName = data['fileName']?.toString() ?? 'attachment';
+              msg = msg.copyWith(
+                content: fileName,
+                mediaType: data['mediaType']?.toString() ?? 'file',
+                fileName: fileName,
+                fileSize: data['fileSize'] is num
+                    ? (data['fileSize'] as num).toInt()
+                    : null,
+                durationMs: data['durationMs'] is num
+                    ? (data['durationMs'] as num).toInt()
+                    : null,
+                fileHash: data['fileHash']?.toString(),
+                attachmentId: data['fileId']?.toString(),
+              );
+              needsResave = true;
+            }
+          } catch (_) {}
+        }
+        final existing = messageMap[msg.id];
+        messageMap[msg.id] = msg.copyWith(
+          mediaPath: msg.mediaPath ?? existing?.mediaPath,
+          attachmentId: msg.attachmentId ?? existing?.attachmentId,
+        );
+      }
+
+      // Reconcile and attach any pending emoji reactions to their target messages
+      for (final r in reactionsToApply) {
+        final targetId = r['targetMessageId']?.toString();
+        final emoji = r['emoji']?.toString();
+        final senderId = r['senderId']?.toString() ?? '';
+        if (targetId != null &&
+            emoji != null &&
+            messageMap.containsKey(targetId)) {
+          final target = messageMap[targetId]!;
+          final curReactions = Map<String, String>.from(target.reactions ?? {});
+          curReactions[senderId] = emoji;
+          messageMap[targetId] = target.copyWith(reactions: curReactions);
+        }
+      }
+
+      final messages = messageMap.values.toList();
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      if (needsResave) {
+        // Rewrite sanitized file in background
+        file
+            .writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()),
+                flush: true)
+            .catchError((e) {
+          debugPrint('Error resaving sanitized conversation: $e');
+          return file;
+        });
+      }
+
       return messages;
     } catch (e) {
       debugPrint('Error loading conversation for $peerOfflineMeshId: $e');
@@ -56,26 +125,78 @@ class LocalStorageService {
     final messages = await loadConversation(peerOfflineMeshId);
     messages.removeWhere((message) => message.id == messageId);
     final file = await _getConversationFile(peerOfflineMeshId);
-    await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+    await file.writeAsString(
+        jsonEncode(messages.map((m) => m.toJson()).toList()),
+        flush: true);
   }
 
   Future<void> saveMessage(String peerOfflineMeshId, Message message) async {
     await saveMessages(peerOfflineMeshId, [message]);
   }
 
-  Future<void> saveMessages(String peerOfflineMeshId, List<Message> newMessages) async {
+  Future<void> saveMessages(
+      String peerOfflineMeshId, List<Message> newMessages) async {
     if (newMessages.isEmpty) return;
     try {
       final file = await _getConversationFile(peerOfflineMeshId);
       final existingMessages = await loadConversation(peerOfflineMeshId);
-      
+
       final Map<String, Message> messageMap = {
         for (var m in existingMessages) m.id: m,
       };
 
       for (var msg in newMessages) {
         if (msg.content == '[Encrypted sent message]') continue;
-        messageMap[msg.id] = msg;
+
+        // Check if message is a control / reaction payload
+        final trimmed = msg.content.trim();
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            final data = jsonDecode(trimmed);
+            if (data is Map && data['type'] == 'REACTION') {
+              final targetId = data['targetMessageId']?.toString();
+              final emoji = data['emoji']?.toString();
+              final senderId =
+                  data['senderId']?.toString() ?? msg.senderOfflineMeshId;
+              if (targetId != null &&
+                  emoji != null &&
+                  messageMap.containsKey(targetId)) {
+                final target = messageMap[targetId]!;
+                final curReactions =
+                    Map<String, String>.from(target.reactions ?? {});
+                if (curReactions[senderId] == emoji) {
+                  curReactions.remove(senderId);
+                } else {
+                  curReactions[senderId] = emoji;
+                }
+                messageMap[targetId] = target.copyWith(reactions: curReactions);
+              }
+              // NEVER persist reaction as a visible text message bubble!
+              continue;
+            } else if (data is Map && data['type'] == 'MEDIA_MESSAGE') {
+              final fileName = data['fileName']?.toString() ?? 'attachment';
+              msg = msg.copyWith(
+                content: fileName,
+                mediaType: data['mediaType']?.toString() ?? 'file',
+                fileName: fileName,
+                fileSize: data['fileSize'] is num
+                    ? (data['fileSize'] as num).toInt()
+                    : null,
+                durationMs: data['durationMs'] is num
+                    ? (data['durationMs'] as num).toInt()
+                    : null,
+                fileHash: data['fileHash']?.toString(),
+                attachmentId: data['fileId']?.toString(),
+              );
+            }
+          } catch (_) {}
+        }
+
+        final existing = messageMap[msg.id];
+        messageMap[msg.id] = msg.copyWith(
+          mediaPath: msg.mediaPath ?? existing?.mediaPath,
+          attachmentId: msg.attachmentId ?? existing?.attachmentId,
+        );
       }
 
       final merged = messageMap.values.toList();
@@ -88,7 +209,41 @@ class LocalStorageService {
     }
   }
 
-  Future<void> updateMessage(String peerOfflineMeshId, Message updatedMessage) async {
+  /// Updates an emoji reaction on a target message in local storage
+  Future<Message?> updateReaction({
+    required String peerOfflineMeshId,
+    required String targetMessageId,
+    required String emoji,
+    required String senderId,
+  }) async {
+    try {
+      final messages = await loadConversation(peerOfflineMeshId);
+      final idx = messages.indexWhere((m) => m.id == targetMessageId);
+      if (idx != -1) {
+        final targetMsg = messages[idx];
+        final currentReactions =
+            Map<String, String>.from(targetMsg.reactions ?? {});
+        if (currentReactions[senderId] == emoji) {
+          currentReactions.remove(senderId);
+        } else {
+          currentReactions[senderId] = emoji;
+        }
+        final updated = targetMsg.copyWith(reactions: currentReactions);
+        messages[idx] = updated;
+        final file = await _getConversationFile(peerOfflineMeshId);
+        await file.writeAsString(
+            jsonEncode(messages.map((m) => m.toJson()).toList()),
+            flush: true);
+        return updated;
+      }
+    } catch (e) {
+      debugPrint('Error updating reaction in local storage: $e');
+    }
+    return null;
+  }
+
+  Future<void> updateMessage(
+      String peerOfflineMeshId, Message updatedMessage) async {
     try {
       final messages = await loadConversation(peerOfflineMeshId);
       final index = messages.indexWhere((m) => m.id == updatedMessage.id);
@@ -99,7 +254,9 @@ class LocalStorageService {
       }
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       final file = await _getConversationFile(peerOfflineMeshId);
-      await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+      await file.writeAsString(
+          jsonEncode(messages.map((m) => m.toJson()).toList()),
+          flush: true);
     } catch (e) {
       debugPrint('Error updating message in $peerOfflineMeshId: $e');
     }
@@ -123,27 +280,33 @@ class LocalStorageService {
           editedAt: isEdited ? DateTime.now() : messages[index].editedAt,
         );
         final file = await _getConversationFile(peerOfflineMeshId);
-        await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+        await file.writeAsString(
+            jsonEncode(messages.map((m) => m.toJson()).toList()),
+            flush: true);
       }
     } catch (e) {
       debugPrint('Error updating message content in $peerOfflineMeshId: $e');
     }
   }
 
-  Future<void> markConversationAsRead(String peerOfflineMeshId, String myOfflineMeshId) async {
+  Future<void> markConversationAsRead(
+      String peerOfflineMeshId, String myOfflineMeshId) async {
     try {
       final messages = await loadConversation(peerOfflineMeshId);
       bool changed = false;
       for (int i = 0; i < messages.length; i++) {
         final m = messages[i];
-        if (m.senderOfflineMeshId == peerOfflineMeshId && m.status.toLowerCase() != 'read') {
+        if (m.senderOfflineMeshId == peerOfflineMeshId &&
+            m.status.toLowerCase() != 'read') {
           messages[i] = m.copyWith(status: 'read');
           changed = true;
         }
       }
       if (changed) {
         final file = await _getConversationFile(peerOfflineMeshId);
-        await file.writeAsString(jsonEncode(messages.map((m) => m.toJson()).toList()), flush: true);
+        await file.writeAsString(
+            jsonEncode(messages.map((m) => m.toJson()).toList()),
+            flush: true);
       }
     } catch (e) {
       debugPrint('Error marking conversation as read: $e');
@@ -158,8 +321,11 @@ class LocalStorageService {
       final files = await convDir.list().toList();
       final peerIds = <String>[];
       for (var f in files) {
-        if (f is File && p.basename(f.path).startsWith('messages_') && f.path.endsWith('.json')) {
-          final raw = p.basenameWithoutExtension(f.path).replaceFirst('messages_', '');
+        if (f is File &&
+            p.basename(f.path).startsWith('messages_') &&
+            f.path.endsWith('.json')) {
+          final raw =
+              p.basenameWithoutExtension(f.path).replaceFirst('messages_', '');
           peerIds.add(raw);
         }
       }
@@ -193,7 +359,8 @@ class LocalStorageService {
     }
   }
 
-  Future<Map<String, bool>> getConversationFlags(String peerOfflineMeshId) async {
+  Future<Map<String, bool>> getConversationFlags(
+      String peerOfflineMeshId) async {
     final all = await _loadAllFlags();
     final item = all[_sanitizeId(peerOfflineMeshId)];
     if (item is Map) {
@@ -206,7 +373,8 @@ class LocalStorageService {
     return {'pinned': false, 'archived': false, 'muted': false};
   }
 
-  Future<void> setConversationFlag(String peerOfflineMeshId, String flag, bool value) async {
+  Future<void> setConversationFlag(
+      String peerOfflineMeshId, String flag, bool value) async {
     try {
       final all = await _loadAllFlags();
       final key = _sanitizeId(peerOfflineMeshId);
@@ -246,7 +414,9 @@ class LocalStorageService {
       final content = await file.readAsString();
       if (content.trim().isEmpty) return [];
       final List<dynamic> jsonList = jsonDecode(content);
-      final files = jsonList.map((j) => FileMetadata.fromJson(Map<String, dynamic>.from(j))).toList();
+      final files = jsonList
+          .map((j) => FileMetadata.fromJson(Map<String, dynamic>.from(j)))
+          .toList();
       files.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return files;
     } catch (e) {
@@ -267,7 +437,7 @@ class LocalStorageService {
     try {
       final file = await _getFileMetadataFile(type);
       final existing = await _loadFileMetadataList(type);
-      
+
       final Map<String, FileMetadata> fileMap = {
         for (var f in existing) f.id: f,
       };
@@ -429,7 +599,8 @@ class LocalStorageService {
 
       // Keep cache bounded to 2000 entries
       if (processed.length > 2000) {
-        final keysToRemove = processed.keys.take(processed.length - 2000).toList();
+        final keysToRemove =
+            processed.keys.take(processed.length - 2000).toList();
         for (final k in keysToRemove) {
           processed.remove(k);
         }
@@ -534,7 +705,8 @@ class LocalStorageService {
       final beforeCount = buffer.length;
 
       buffer.removeWhere((item) {
-        final bufferedAt = DateTime.tryParse(item['bufferedAt']?.toString() ?? '');
+        final bufferedAt =
+            DateTime.tryParse(item['bufferedAt']?.toString() ?? '');
         if (bufferedAt == null) return false;
         return now.difference(bufferedAt) > maxAge;
       });

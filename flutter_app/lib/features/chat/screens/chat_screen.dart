@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../../core/services/voice_note_service.dart';
+import '../../../core/services/file_viewer_service.dart';
 import '../widgets/media_message_bubbles.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -104,7 +106,138 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isLoading = true;
   String? _errorMessage;
   bool _isSending = false;
+  final Set<String> _downloadingMessageIds = {};
   ContactSecurityInfo? _contactSecurity;
+
+  Future<void> _saveAttachment(Message msg) async {
+    try {
+      File? file;
+      if (msg.mediaPath != null && File(msg.mediaPath!).existsSync()) {
+        file = File(msg.mediaPath!);
+      } else {
+        file = await widget.routingService.downloadMediaMessage(msg);
+      }
+      if (file == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File not available to save.')));
+        }
+        return;
+      }
+      final saved = await FileViewerService.saveToDownloads(
+        file.path,
+        fileName: msg.fileName ?? 'attachment',
+        mimeType: FileViewerService.mimeFor(file.path),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(saved
+                ? 'Saved to Downloads/OfflineMesh'
+                : 'Failed to save to Downloads'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not save attachment: $e')));
+      }
+    }
+  }
+
+  Future<void> _openMediaFile(Message msg) async {
+    try {
+      File? file;
+      if (msg.mediaPath != null && File(msg.mediaPath!).existsSync()) {
+        file = File(msg.mediaPath!);
+      } else {
+        file = await widget.routingService.downloadMediaMessage(msg);
+      }
+      if (file == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('File not found on device.')));
+        }
+        return;
+      }
+      final opened = await FileViewerService.openFile(
+        file.path,
+        mimeType: FileViewerService.mimeFor(file.path),
+      );
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'No app found to open this file. You can save it to Downloads.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open file: $e')));
+      }
+    }
+  }
+
+  Future<void> _shareMediaFile(Message msg) async {
+    try {
+      File? file;
+      if (msg.mediaPath != null && File(msg.mediaPath!).existsSync()) {
+        file = File(msg.mediaPath!);
+      } else {
+        file = await widget.routingService.downloadMediaMessage(msg);
+      }
+      if (file == null) return;
+      await FileViewerService.shareFile(
+        file.path,
+        mimeType: FileViewerService.mimeFor(file.path),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not share file: $e')));
+      }
+    }
+  }
+
+  Future<void> _downloadMedia(Message msg) async {
+    if (_downloadingMessageIds.contains(msg.id)) return;
+    setState(() => _downloadingMessageIds.add(msg.id));
+    try {
+      final downloaded = await widget.routingService.downloadMediaMessage(msg);
+      if (downloaded != null && mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == msg.id);
+          if (idx != -1) {
+            _messages[idx] =
+                _messages[idx].copyWith(mediaPath: downloaded.path);
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Downloaded ${msg.fileName ?? "attachment"}')),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Could not download media file. Peer might be offline.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _downloadingMessageIds.remove(msg.id));
+      }
+    }
+  }
+
   StreamSubscription? _incomingSub;
 
   // WhatsApp Features State
@@ -148,6 +281,35 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           widget.routingService.wifiMessagingService.currentUser.offlineMeshId;
       final friendId = widget.friend.offlineMeshId;
 
+      // 0. Intercept control packets so they NEVER create raw message bubbles
+      if (message.content.trim().startsWith('{')) {
+        try {
+          final decoded = jsonDecode(message.content);
+          if (decoded is Map && decoded['type'] == 'REACTION') {
+            final targetId = decoded['targetMessageId']?.toString();
+            final emoji = decoded['emoji']?.toString();
+            final senderId =
+                decoded['senderId']?.toString() ?? message.senderOfflineMeshId;
+            if (targetId != null && emoji != null && mounted) {
+              setState(() {
+                final idx = _messages.indexWhere((m) => m.id == targetId);
+                if (idx != -1) {
+                  final target = _messages[idx];
+                  final r = Map<String, String>.from(target.reactions ?? {});
+                  if (r[senderId] == emoji) {
+                    r.remove(senderId);
+                  } else {
+                    r[senderId] = emoji;
+                  }
+                  _messages[idx] = target.copyWith(reactions: r);
+                }
+              });
+            }
+            return;
+          }
+        } catch (_) {}
+      }
+
       // 1. Is this a message from this friend to me?
       final isFromFriendToMe = message.senderOfflineMeshId == friendId &&
           (message.recipientOfflineMeshId == null ||
@@ -170,6 +332,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           _scrollToBottom();
           if (isFromFriendToMe) {
             widget.routingService.sendReadReceipt(widget.friend.offlineMeshId);
+            // Pre-download media in background if not already local
+            if (message.mediaType != 'text' &&
+                (message.mediaPath == null ||
+                    !File(message.mediaPath!).existsSync())) {
+              _downloadMedia(message);
+            }
           }
         }
       }
@@ -225,7 +393,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           .loadConversation(widget.friend.offlineMeshId);
       final filteredLocal = localMsgs.where((m) {
         if (m.content == '[Encrypted sent message]' ||
-            m.content == 'Unable to decrypt message.') {
+            m.content == 'Unable to decrypt message.' ||
+            m.content.trim().startsWith('{"type":"REACTION"') ||
+            m.content.trim().startsWith('{"type":"READ_RECEIPT"')) {
           return false;
         }
         // Strict isolation: must be between myId and friendId
@@ -255,7 +425,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           .getConversationHistory(widget.friend.offlineMeshId);
       final filteredRemote = remoteMessages.where((m) {
         if (m.content == '[Encrypted sent message]' ||
-            m.content == 'Unable to decrypt message.') {
+            m.content == 'Unable to decrypt message.' ||
+            m.content.trim().startsWith('{"type":"REACTION"') ||
+            m.content.trim().startsWith('{"type":"READ_RECEIPT"')) {
           return false;
         }
         final isFromFriend = m.senderOfflineMeshId == friendId &&
@@ -274,7 +446,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           .loadConversation(widget.friend.offlineMeshId);
       final cleanedMerged = merged.where((m) {
         if (m.content == '[Encrypted sent message]' ||
-            m.content == 'Unable to decrypt message.') {
+            m.content == 'Unable to decrypt message.' ||
+            m.content.trim().startsWith('{"type":"REACTION"') ||
+            m.content.trim().startsWith('{"type":"READ_RECEIPT"')) {
           return false;
         }
         final isFromFriend = m.senderOfflineMeshId == friendId &&
@@ -292,6 +466,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           _isLoading = false;
         });
         _scrollToBottom();
+
+        // Background preload for media messages missing local file
+        for (final m in cleanedMerged) {
+          if (m.mediaType != 'text' &&
+              (m.mediaPath == null || !File(m.mediaPath!).existsSync())) {
+            _downloadMedia(m);
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -526,6 +708,22 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _onToggleReaction(Message msg, String emoji) {
+    final myId =
+        widget.routingService.wifiMessagingService.currentUser.offlineMeshId;
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx != -1) {
+        final target = _messages[idx];
+        final r = Map<String, String>.from(target.reactions ?? {});
+        if (r[myId] == emoji) {
+          r.remove(myId);
+        } else {
+          r[myId] = emoji;
+        }
+        _messages[idx] = target.copyWith(reactions: r);
+      }
+    });
+
     widget.routingService.sendReaction(
       peerOfflineMeshId: widget.friend.offlineMeshId,
       messageId: msg.id,
@@ -759,6 +957,47 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       _showEditDialog(msg);
                     },
                   ),
+                if (msg.mediaType != 'text') ...[
+                  ListTile(
+                    leading: const Icon(Icons.open_in_new_rounded,
+                        color: MeshColors.blue),
+                    title: const Text('Open in app'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _openMediaFile(msg);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.save_alt_rounded,
+                        color: MeshColors.blue),
+                    title: const Text('Save to Downloads'),
+                    subtitle: const Text('Save file to Downloads/OfflineMesh'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _saveAttachment(msg);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.share_rounded,
+                        color: MeshColors.blue),
+                    title: const Text('Share file'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _shareMediaFile(msg);
+                    },
+                  ),
+                  if (msg.mediaPath == null ||
+                      !File(msg.mediaPath!).existsSync())
+                    ListTile(
+                      leading: const Icon(Icons.download_rounded,
+                          color: MeshColors.blue),
+                      title: const Text('Download attachment'),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _downloadMedia(msg);
+                      },
+                    ),
+                ],
                 ListTile(
                   leading: const Icon(Icons.copy_rounded),
                   title: const Text('Copy text'),
@@ -1627,6 +1866,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                   }
                                 }
 
+                                if (msg.content
+                                        .trim()
+                                        .startsWith('{"type":"REACTION"') ||
+                                    msg.content
+                                        .trim()
+                                        .startsWith('{"type":"READ_RECEIPT"')) {
+                                  return const SizedBox.shrink();
+                                }
+
                                 return Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -1755,6 +2003,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                                 .mediaType ==
                                                             'audio') ...[
                                                           VoiceMessageBubble(
+                                                            onDownload: () =>
+                                                                _downloadMedia(
+                                                                    msg),
+                                                            isDownloading:
+                                                                _downloadingMessageIds
+                                                                    .contains(
+                                                                        msg.id),
                                                             message: msg,
                                                             isMe: isMe,
                                                             voiceNoteService:
@@ -1764,6 +2019,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                                 .mediaType ==
                                                             'image') ...[
                                                           ImageMessageBubble(
+                                                            onDownload: () =>
+                                                                _downloadMedia(
+                                                                    msg),
+                                                            isDownloading:
+                                                                _downloadingMessageIds
+                                                                    .contains(
+                                                                        msg.id),
                                                             message: msg,
                                                             isMe: isMe,
                                                           ),
@@ -1771,6 +2033,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                                 .mediaType ==
                                                             'video') ...[
                                                           VideoMessageBubble(
+                                                            onDownload: () =>
+                                                                _downloadMedia(
+                                                                    msg),
+                                                            isDownloading:
+                                                                _downloadingMessageIds
+                                                                    .contains(
+                                                                        msg.id),
                                                             message: msg,
                                                             isMe: isMe,
                                                           ),
@@ -1778,6 +2047,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                                 .mediaType ==
                                                             'file') ...[
                                                           DocumentMessageBubble(
+                                                            onDownload: () =>
+                                                                _downloadMedia(
+                                                                    msg),
+                                                            isDownloading:
+                                                                _downloadingMessageIds
+                                                                    .contains(
+                                                                        msg.id),
                                                             message: msg,
                                                             isMe: isMe,
                                                           ),

@@ -9,15 +9,16 @@ export 'mesh_theme.dart';
 /// A shared, normalized damped spring for small interface transitions.
 class MeshSpringCurve extends Curve {
   const MeshSpringCurve();
+  static final _spring = SpringSimulation(
+    const SpringDescription(mass: 1, stiffness: 300, damping: 35),
+    0,
+    1,
+    0,
+  );
+  static final _end = _spring.x(.5);
   @override
   double transformInternal(double t) {
-    final spring = SpringSimulation(
-      const SpringDescription(mass: 1, stiffness: 300, damping: 35),
-      0,
-      1,
-      0,
-    );
-    return spring.x(t * .5) / spring.x(.5);
+    return _spring.x(t * .5) / _end;
   }
 }
 

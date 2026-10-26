@@ -91,10 +91,12 @@ public class Message implements Persistable<UUID> {
     private Message replyTo;
 
     @Column(name = "is_edited", nullable = false)
+    @org.hibernate.annotations.ColumnDefault("false")
     @Builder.Default
     private boolean isEdited = false;
 
     @Column(name = "is_deleted", nullable = false)
+    @org.hibernate.annotations.ColumnDefault("false")
     @Builder.Default
     private boolean isDeleted = false;
 

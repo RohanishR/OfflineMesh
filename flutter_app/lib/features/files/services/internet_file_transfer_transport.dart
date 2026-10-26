@@ -1,3 +1,4 @@
+import '../../../core/network/auth_service.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/file_metadata.dart';
@@ -8,7 +9,8 @@ class InternetFileTransferTransport implements FileTransferTransport {
   final String baseUrl;
   final String jwtToken;
 
-  InternetFileTransferTransport({required this.baseUrl, required this.jwtToken});
+  InternetFileTransferTransport(
+      {required this.baseUrl, required this.jwtToken});
 
   @override
   Future<void> uploadFile({
@@ -24,9 +26,11 @@ class InternetFileTransferTransport implements FileTransferTransport {
     final response = await request.send();
 
     // In a real-world scenario, we'd use a custom ByteStream to track upload progress accurately.
-    // Since http.MultipartRequest doesn't support fine-grained upload progress easily without 
+    // Since http.MultipartRequest doesn't support fine-grained upload progress easily without
     // overriding ByteStream, we simulate progress based on response completion for now.
-    
+
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       onProgress(1.0);
     } else {
@@ -46,13 +50,17 @@ class InternetFileTransferTransport implements FileTransferTransport {
 
     final response = await http.Client().send(request);
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode != 200) {
       throw Exception('Failed to download file: ${response.statusCode}');
     }
 
-    final file = File(p.join(saveDirectory, metadata.originalFileName));
+    final safeName =
+        metadata.originalFileName.replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
+    final file = File(p.join(saveDirectory, '${metadata.id}_$safeName'));
     final sink = file.openWrite();
-    
+
     final contentLength = response.contentLength ?? metadata.fileSize;
     int downloaded = 0;
 

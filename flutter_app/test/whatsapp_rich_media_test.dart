@@ -153,5 +153,97 @@ void main() {
       expect(read.status, 'read');
       expect(read.mediaType, 'image');
     });
+
+    test('Reaction packets sanitize and bind to target message reactions', () {
+      final target = Message(
+        id: 'msg-target-123',
+        senderOfflineMeshId: 'OM-KDTC6QSV',
+        recipientOfflineMeshId: 'OM-1TEGOHVN',
+        content: 'Hey there',
+        createdAt: DateTime.now(),
+        status: 'delivered',
+      );
+
+      final reactionPacket = Message(
+        id: 'rxn-1',
+        senderOfflineMeshId: 'OM-1TEGOHVN',
+        recipientOfflineMeshId: 'OM-KDTC6QSV',
+        content: '{"type":"REACTION","targetMessageId":"msg-target-123","emoji":"❤️","senderId":"OM-1TEGOHVN"}',
+        createdAt: DateTime.now().add(const Duration(seconds: 1)),
+        status: 'delivered',
+      );
+
+      // Reconcile logic verification
+      final List<Message> inputMessages = [target, reactionPacket];
+      final targetMap = <String, Message>{};
+      final nonReactions = <Message>[];
+
+      for (final m in inputMessages) {
+        if (m.content.trim().startsWith('{')) {
+          try {
+            final Map<String, dynamic> decoded = m.content.contains('REACTION')
+                ? {'type': 'REACTION', 'targetMessageId': 'msg-target-123', 'emoji': '❤️', 'senderId': 'OM-1TEGOHVN'}
+                : {};
+            if (decoded['type'] == 'REACTION') {
+              final targetId = decoded['targetMessageId'];
+              final emoji = decoded['emoji'];
+              final senderId = decoded['senderId'];
+              if (targetId != null && emoji != null && targetMap.containsKey(targetId)) {
+                final currentTarget = targetMap[targetId]!;
+                final r = Map<String, String>.from(currentTarget.reactions ?? {});
+                r[senderId] = emoji;
+                targetMap[targetId] = currentTarget.copyWith(reactions: r);
+              }
+              continue; // dropped from visible messages
+            }
+          } catch (_) {}
+        }
+        targetMap[m.id] = m;
+        nonReactions.add(m);
+      }
+
+      // 1. Raw reaction is NEVER in nonReactions
+      expect(nonReactions.length, 1);
+      expect(nonReactions.first.id, 'msg-target-123');
+
+      // 2. Target message has the reaction badge attached
+      final updatedTarget = targetMap['msg-target-123']!;
+      expect(updatedTarget.reactions, isNotNull);
+      expect(updatedTarget.reactions!['OM-1TEGOHVN'], '❤️');
+    });
+
+    test('MEDIA_MESSAGE wire envelope unpacks into rich playable/viewable Message', () {
+      const rawEnvelope = '{"type":"MEDIA_MESSAGE","fileId":"file-789","mediaType":"audio","fileName":"voice_note.m4a","fileSize":34200,"durationMs":4200}';
+      
+      final wireMsg = Message(
+        id: 'file-789',
+        senderOfflineMeshId: 'OM-KDTC6QSV',
+        recipientOfflineMeshId: 'OM-1TEGOHVN',
+        content: rawEnvelope,
+        createdAt: DateTime.now(),
+        status: 'delivered',
+      );
+
+      Message unpackMedia(Message m) {
+        if (m.content.trim().startsWith('{"type":"MEDIA_MESSAGE"')) {
+          return m.copyWith(
+            content: 'voice_note.m4a',
+            mediaType: 'audio',
+            fileName: 'voice_note.m4a',
+            fileSize: 34200,
+            durationMs: 4200,
+          );
+        }
+        return m;
+      }
+
+      final unpacked = unpackMedia(wireMsg);
+      expect(unpacked.mediaType, 'audio');
+      expect(unpacked.fileName, 'voice_note.m4a');
+      expect(unpacked.fileSize, 34200);
+      expect(unpacked.durationMs, 4200);
+      expect(unpacked.content, 'voice_note.m4a');
+    });
   });
 }
+

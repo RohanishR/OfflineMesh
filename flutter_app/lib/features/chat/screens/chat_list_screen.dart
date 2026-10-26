@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -66,8 +67,50 @@ class _ChatListScreenState extends State<ChatListScreen> {
     super.dispose();
   }
 
+  String _formatPreviewText(String content, String? mediaType, bool isDeleted) {
+    if (isDeleted) return 'This message was deleted';
+    if (content.trim().startsWith('{')) {
+      try {
+        final decoded = jsonDecode(content);
+        if (decoded is Map) {
+          final t = decoded['type'];
+          if (t == 'REACTION' || t == 'READ_RECEIPT') {
+            return '';
+          }
+          if (t == 'MEDIA_MESSAGE') {
+            final mType = decoded['mediaType']?.toString();
+            final fName = decoded['fileName']?.toString();
+            if (mType == 'audio') return '🎤 Voice message';
+            if (mType == 'image') return '📷 Photo';
+            if (mType == 'video') return '🎥 Video';
+            if (mType == 'file') return fName ?? '📄 Document';
+          }
+        }
+      } catch (_) {}
+    }
+    if (mediaType == 'audio') return '🎤 Voice message';
+    if (mediaType == 'image') return '📷 Photo';
+    if (mediaType == 'video') return '🎥 Video';
+    if (mediaType == 'file') {
+      return content.isNotEmpty ? content : '📄 Document';
+    }
+    return content;
+  }
+
   void _onIncomingMessageReceived(Message message) {
     if (!mounted) return;
+
+    // Filter out reaction or control packets so they never overwrite last message preview
+    if (message.content.trim().startsWith('{')) {
+      try {
+        final decoded = jsonDecode(message.content);
+        if (decoded is Map) {
+          final t = decoded['type'];
+          if (t == 'REACTION' || t == 'READ_RECEIPT') return;
+        }
+      } catch (_) {}
+    }
+
     final myId =
         widget.routingService.wifiMessagingService.currentUser.offlineMeshId;
     final peerId = message.senderOfflineMeshId == myId
@@ -75,6 +118,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
         : message.senderOfflineMeshId;
 
     if (peerId.isEmpty) return;
+
+    final preview = _formatPreviewText(
+      message.content,
+      message.mediaType,
+      message.isDeleted,
+    );
 
     setState(() {
       final index =
@@ -87,8 +136,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
             isFromMe ? current.unreadCount : (current.unreadCount + 1);
 
         final updated = current.copyWith(
-          lastMessage:
-              message.isDeleted ? 'This message was deleted' : message.content,
+          lastMessage: preview,
           lastMessageSenderId: message.senderOfflineMeshId,
           lastMessageStatus: message.status,
           lastMessageTime: message.createdAt,
@@ -110,8 +158,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         final newConv = ConversationSummary(
           peerOfflineMeshId: peerId,
           peerUsername: username,
-          lastMessage:
-              message.isDeleted ? 'This message was deleted' : message.content,
+          lastMessage: preview,
           lastMessageSenderId: message.senderOfflineMeshId,
           lastMessageStatus: message.status,
           lastMessageTime: message.createdAt,
@@ -163,10 +210,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
             .getConversationFlags(peerId);
         final username = friendMap[peerId]?.username ?? peerId;
 
-        if (messages.isNotEmpty) {
-          final last = messages.last;
+        final chatMessages = messages.where((m) {
+          if (m.content.trim().startsWith('{"type":"REACTION"') ||
+              m.content.trim().startsWith('{"type":"READ_RECEIPT"')) {
+            return false;
+          }
+          return true;
+        }).toList();
+
+        if (chatMessages.isNotEmpty) {
+          final last = chatMessages.last;
           int unread = 0;
-          for (final m in messages) {
+          for (final m in chatMessages) {
             if (m.senderOfflineMeshId == peerId &&
                 m.status.toLowerCase() != 'read') {
               unread++;
@@ -176,8 +231,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
           summaries.add(ConversationSummary(
             peerOfflineMeshId: peerId,
             peerUsername: username,
-            lastMessage:
-                last.isDeleted ? 'This message was deleted' : last.content,
+            lastMessage: _formatPreviewText(
+              last.content,
+              last.mediaType,
+              last.isDeleted,
+            ),
             lastMessageSenderId: last.senderOfflineMeshId,
             lastMessageStatus: last.status,
             lastMessageTime: last.createdAt,
@@ -309,6 +367,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final nameController = TextEditingController();
     final descController = TextEditingController();
     final selectedFriendIds = <String>{};
+    bool creating = false;
+    String? createError;
 
     showDialog(
       context: context,
@@ -322,6 +382,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (createError != null)
+                    Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(createError!,
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error))),
                   TextField(
                     controller: nameController,
                     decoration: const InputDecoration(
@@ -379,31 +445,41 @@ class _ChatListScreenState extends State<ChatListScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () async {
-                final sm = ScaffoldMessenger.of(context);
-                final name = nameController.text.trim();
-                if (name.isEmpty) return;
-                Navigator.pop(dlgCtx);
-                try {
-                  final group = await _groupService.createGroup(
-                    name: name,
-                    description: descController.text.trim().isEmpty
-                        ? null
-                        : descController.text.trim(),
-                    memberOfflineMeshIds: selectedFriendIds.toList(),
-                  );
-                  if (mounted) {
-                    _openGroupChat(group);
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    sm.showSnackBar(
-                      SnackBar(content: Text('Failed to create group: $e')),
-                    );
-                  }
-                }
-              },
-              child: const Text('Create'),
+              onPressed: creating
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+                      if (name.isEmpty) {
+                        setDlgState(() => createError = 'Enter a group name.');
+                        return;
+                      }
+                      setDlgState(() {
+                        creating = true;
+                        createError = null;
+                      });
+                      try {
+                        final group = await _groupService.createGroup(
+                          name: name,
+                          description: descController.text.trim().isEmpty
+                              ? null
+                              : descController.text.trim(),
+                          memberOfflineMeshIds: selectedFriendIds.toList(),
+                        );
+                        if (mounted && dlgCtx.mounted) {
+                          Navigator.pop(dlgCtx);
+                          _loadAllData();
+                          _openGroupChat(group);
+                        }
+                      } catch (e) {
+                        if (dlgCtx.mounted) {
+                          setDlgState(() {
+                            creating = false;
+                            createError = e.toString();
+                          });
+                        }
+                      }
+                    },
+              child: Text(creating ? 'Creating…' : 'Create'),
             ),
           ],
         ),

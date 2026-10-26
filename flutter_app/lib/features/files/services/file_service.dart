@@ -1,3 +1,4 @@
+import '../../../core/network/auth_service.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
@@ -14,8 +15,10 @@ class FileService {
   E2eEncryptionService? encryptionService;
   late final FileTransferTransport _transport;
 
-  FileService({required this.baseUrl, required this.jwtToken, this.encryptionService}) {
-    _transport = InternetFileTransferTransport(baseUrl: baseUrl, jwtToken: jwtToken);
+  FileService(
+      {required this.baseUrl, required this.jwtToken, this.encryptionService}) {
+    _transport =
+        InternetFileTransferTransport(baseUrl: baseUrl, jwtToken: jwtToken);
   }
 
   Map<String, String> get _headers => {
@@ -46,10 +49,13 @@ class FileService {
       }),
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       return FileMetadata.fromJson(jsonDecode(response.body));
     } else {
-      throw Exception('Failed to create file metadata: ${response.body}');
+      throw Exception(
+          'Failed to create file metadata (HTTP ${response.statusCode}): ${response.body.isEmpty ? 'Server rejected the request.' : response.body}');
     }
   }
 
@@ -58,6 +64,8 @@ class FileService {
       Uri.parse('$baseUrl/api/files/$fileId'),
       headers: _headers,
     );
+
+    AuthService.checkResponse(response.statusCode, jwtToken);
 
     if (response.statusCode == 200) {
       return FileMetadata.fromJson(jsonDecode(response.body));
@@ -72,9 +80,12 @@ class FileService {
       headers: _headers,
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       Iterable l = jsonDecode(response.body);
-      return List<FileMetadata>.from(l.map((model) => FileMetadata.fromJson(model)));
+      return List<FileMetadata>.from(
+          l.map((model) => FileMetadata.fromJson(model)));
     } else {
       throw Exception('Failed to load sent files');
     }
@@ -86,22 +97,38 @@ class FileService {
       headers: _headers,
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       Iterable l = jsonDecode(response.body);
-      return List<FileMetadata>.from(l.map((model) => FileMetadata.fromJson(model)));
+      return List<FileMetadata>.from(
+          l.map((model) => FileMetadata.fromJson(model)));
     } else {
       throw Exception('Failed to load received files');
     }
   }
 
-  Future<void> uploadFile(FileMetadata metadata, File file, Function(double) onProgress) async {
-    await _transport.uploadFile(metadata: metadata, file: file, onProgress: onProgress);
+  Future<void> uploadFile(
+      FileMetadata metadata, File file, Function(double) onProgress) async {
+    await _transport.uploadFile(
+        metadata: metadata, file: file, onProgress: onProgress);
   }
 
-  Future<File> downloadFile(FileMetadata metadata, Function(double) onProgress) async {
-    final directory = await getApplicationDocumentsDirectory();
+  Future<File> downloadFile(
+      FileMetadata metadata, Function(double) onProgress) async {
+    final root = await getApplicationDocumentsDirectory();
+    final directory = Directory(p.join(root.path, 'attachments',
+        metadata.id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')));
+    await directory.create(recursive: true);
+    if (metadata.isEncrypted &&
+        (metadata.encryptedKeyEnvelope == null || encryptionService == null)) {
+      throw StateError(
+          'Encryption information is unavailable for this attachment.');
+    }
 
-    if (metadata.isEncrypted && metadata.encryptedKeyEnvelope != null && encryptionService != null) {
+    if (metadata.isEncrypted &&
+        metadata.encryptedKeyEnvelope != null &&
+        encryptionService != null) {
       final tempDir = await getTemporaryDirectory();
       final encryptedDownloadedFile = await _transport.downloadFile(
         metadata: metadata,
@@ -109,7 +136,8 @@ class FileService {
         onProgress: onProgress,
       );
 
-      final safeName = metadata.originalFileName.replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
+      final safeName = metadata.originalFileName
+          .replaceAll(RegExp(r'[^a-zA-Z0-9.\-_]'), '_');
       final decryptedFilePath = p.join(directory.path, safeName);
       final decryptedFile = File(decryptedFilePath);
 
@@ -120,7 +148,8 @@ class FileService {
         targetFile: decryptedFile,
       );
 
-      if (await encryptedDownloadedFile.exists() && encryptedDownloadedFile.path != decryptedFile.path) {
+      if (await encryptedDownloadedFile.exists() &&
+          encryptedDownloadedFile.path != decryptedFile.path) {
         await encryptedDownloadedFile.delete();
       }
 
@@ -128,8 +157,8 @@ class FileService {
     }
 
     return await _transport.downloadFile(
-      metadata: metadata, 
-      saveDirectory: directory.path, 
+      metadata: metadata,
+      saveDirectory: directory.path,
       onProgress: onProgress,
     );
   }

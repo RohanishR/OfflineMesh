@@ -1,3 +1,4 @@
+import '../network/auth_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -24,8 +25,10 @@ class MessageService {
   final _incomingMessagesController = StreamController<Message>.broadcast();
   Stream<Message> get incomingMessages => _incomingMessagesController.stream;
 
-  final _statusUpdatesController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get statusUpdates => _statusUpdatesController.stream;
+  final _statusUpdatesController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get statusUpdates =>
+      _statusUpdatesController.stream;
 
   final _connectionStateController = StreamController<bool>.broadcast();
   Stream<bool> get connectionStateStream => _connectionStateController.stream;
@@ -44,7 +47,8 @@ class MessageService {
   String? _syncCursor;
   bool _isSyncing = false;
 
-  MessageService({String? baseUrl, required this.jwtToken, this.encryptionService}) 
+  MessageService(
+      {String? baseUrl, required this.jwtToken, this.encryptionService})
       : baseUrl = baseUrl ?? AppConfig.backendBaseUrl;
 
   Map<String, String> get _headers => {
@@ -53,13 +57,26 @@ class MessageService {
       };
 
   Future<void> connectStomp() async {
-    final wsBase = baseUrl.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://');
+    final wsBase = baseUrl
+        .replaceFirst('http://', 'ws://')
+        .replaceFirst('https://', 'wss://');
     final wsUrl = '$wsBase/ws';
 
     _stompClient = StompClient(
       config: StompConfig(
         url: wsUrl,
         onConnect: _onConnect,
+        onStompError: (frame) {
+          final error = '${frame.headers['message'] ?? ''} ${frame.body ?? ''}'
+              .toLowerCase();
+          if (error.contains('invalid jwt') ||
+              error.contains('authentication failed')) {
+            _stompClient?.deactivate();
+            try {
+              AuthService.checkResponse(401, jwtToken);
+            } on SessionExpiredException {/* Home opens sign-in. */}
+          }
+        },
         onWebSocketError: (dynamic error) {
           debugPrint('Message STOMP WebSocket Error: $error');
           _connectionStateController.add(false);
@@ -84,7 +101,9 @@ class MessageService {
             final message = Message.fromJson(jsonMap).copyWith(
               transport: TransportType.INTERNET,
               status: 'delivered',
-              recipientOfflineMeshId: jsonMap['recipientOfflineMeshId']?.toString() ?? encryptionService?.localOfflineMeshId,
+              recipientOfflineMeshId:
+                  jsonMap['recipientOfflineMeshId']?.toString() ??
+                      encryptionService?.localOfflineMeshId,
             );
 
             // Send ACK back to the server
@@ -140,8 +159,11 @@ class MessageService {
           queryParams['cursor'] = _syncCursor!;
         }
 
-        final uri = Uri.parse('$baseUrl/api/messages/sync').replace(queryParameters: queryParams);
+        final uri = Uri.parse('$baseUrl/api/messages/sync')
+            .replace(queryParameters: queryParams);
         final response = await http.get(uri, headers: _headers);
+
+        AuthService.checkResponse(response.statusCode, jwtToken);
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -154,7 +176,9 @@ class MessageService {
             final msg = Message.fromJson(rawMap).copyWith(
               transport: TransportType.INTERNET,
               status: 'delivered',
-              recipientOfflineMeshId: rawMap['recipientOfflineMeshId']?.toString() ?? encryptionService?.localOfflineMeshId,
+              recipientOfflineMeshId:
+                  rawMap['recipientOfflineMeshId']?.toString() ??
+                      encryptionService?.localOfflineMeshId,
             );
             acknowledgeMessage(msg.id);
             _incomingMessagesController.add(msg);
@@ -192,20 +216,24 @@ class MessageService {
       headers: _headers,
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
       final Iterable l;
       if (decoded is List) {
         l = decoded;
-      } else if (decoded is Map<String, dynamic> && decoded['messages'] is List) {
+      } else if (decoded is Map<String, dynamic> &&
+          decoded['messages'] is List) {
         l = decoded['messages'] as List;
       } else {
         l = [];
       }
-      final rawMessages = List<Message>.from(l.map((model) => Message.fromJson(model)));
+      final rawMessages =
+          List<Message>.from(l.map((model) => Message.fromJson(model)));
 
       if (encryptionService == null) {
-        return rawMessages;
+        return _reconcileReactionsAndMedia(rawMessages);
       }
 
       final processedMessages = <Message>[];
@@ -213,9 +241,11 @@ class MessageService {
       for (final msg in rawMessages) {
         if (EncryptedEnvelope.isEncryptedEnvelope(msg.content)) {
           if (msg.senderOfflineMeshId == myId) {
-            final envelope = EncryptedEnvelope.fromJson(jsonDecode(msg.content));
+            final envelope =
+                EncryptedEnvelope.fromJson(jsonDecode(msg.content));
             if (envelope.messageId != msg.id) {
-              await LocalStorageService().removeMessage(offlineMeshId, envelope.messageId);
+              await LocalStorageService()
+                  .removeMessage(offlineMeshId, envelope.messageId);
             }
             String? cached = encryptionService!.getCachedSentMessage(msg.id);
             if (cached == null) {
@@ -246,7 +276,8 @@ class MessageService {
                 recipientOfflineMeshId: myId,
               ));
             } catch (e) {
-              debugPrint('Skipping message that failed decryption or recipient check: $e');
+              debugPrint(
+                  'Skipping message that failed decryption or recipient check: $e');
               // Do NOT display 'Unable to decrypt message' or leak messages
             }
           }
@@ -259,14 +290,71 @@ class MessageService {
             continue; // Mismatched recipient
           }
           processedMessages.add(msg.copyWith(
-            recipientOfflineMeshId: msg.recipientOfflineMeshId ?? (msg.senderOfflineMeshId == myId ? offlineMeshId : myId),
+            recipientOfflineMeshId: msg.recipientOfflineMeshId ??
+                (msg.senderOfflineMeshId == myId ? offlineMeshId : myId),
           ));
         }
       }
-      return processedMessages;
+      return _reconcileReactionsAndMedia(processedMessages);
     } else {
       throw Exception('Failed to load messages');
     }
+  }
+
+  /// Extracts emoji reactions and attaches them to their target messages,
+  /// removing raw reaction packets from the conversation list, and transforms
+  /// media messages to valid rich media items.
+  List<Message> _reconcileReactionsAndMedia(List<Message> messages) {
+    final cleanMessages = <Message>[];
+    final reactionsToApply = <Map<String, dynamic>>[];
+
+    for (var msg in messages) {
+      final trimmed = msg.content.trim();
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        try {
+          final data = jsonDecode(trimmed);
+          if (data is Map && data['type'] == 'REACTION') {
+            reactionsToApply.add(Map<String, dynamic>.from(data));
+            continue; // Drop raw reaction packet
+          } else if (data is Map && data['type'] == 'MEDIA_MESSAGE') {
+            final fileName = data['fileName']?.toString() ?? 'attachment';
+            msg = msg.copyWith(
+              content: fileName,
+              mediaType: data['mediaType']?.toString() ?? 'file',
+              fileName: fileName,
+              fileSize: data['fileSize'] is num
+                  ? (data['fileSize'] as num).toInt()
+                  : null,
+              durationMs: data['durationMs'] is num
+                  ? (data['durationMs'] as num).toInt()
+                  : null,
+              fileHash: data['fileHash']?.toString(),
+              attachmentId: data['fileId']?.toString(),
+            );
+          }
+        } catch (_) {}
+      }
+      cleanMessages.add(msg);
+    }
+
+    // Apply emoji reactions to target messages
+    for (final r in reactionsToApply) {
+      final targetId = r['targetMessageId']?.toString();
+      final emoji = r['emoji']?.toString();
+      final senderId = r['senderId']?.toString() ?? '';
+      if (targetId != null && emoji != null) {
+        final idx = cleanMessages.indexWhere((m) => m.id == targetId);
+        if (idx != -1) {
+          final curReactions =
+              Map<String, String>.from(cleanMessages[idx].reactions ?? {});
+          curReactions[senderId] = emoji;
+          cleanMessages[idx] =
+              cleanMessages[idx].copyWith(reactions: curReactions);
+        }
+      }
+    }
+
+    return cleanMessages;
   }
 
   Future<Message> sendMessage(String offlineMeshId, String content) async {
@@ -275,6 +363,8 @@ class MessageService {
       headers: _headers,
       body: jsonEncode({'content': content}),
     );
+
+    AuthService.checkResponse(response.statusCode, jwtToken);
 
     if (response.statusCode == 201) {
       return Message.fromJson(jsonDecode(response.body));
@@ -289,6 +379,8 @@ class MessageService {
       headers: _headers,
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       final List<dynamic> list = jsonDecode(response.body);
       final summaries = <ConversationSummary>[];
@@ -298,13 +390,17 @@ class MessageService {
         String lastMsg = rawMap['lastMessage']?.toString() ?? '';
 
         // If encrypted envelope, try to decrypt or check cached message
-        if (encryptionService != null && EncryptedEnvelope.isEncryptedEnvelope(lastMsg)) {
+        if (encryptionService != null &&
+            EncryptedEnvelope.isEncryptedEnvelope(lastMsg)) {
           try {
             final env = EncryptedEnvelope.fromJson(jsonDecode(lastMsg));
             if (rawMap['isLastMessageFromMe'] == true) {
-              lastMsg = encryptionService!.getCachedSentMessage(env.messageId) ?? 'Sent message';
+              lastMsg =
+                  encryptionService!.getCachedSentMessage(env.messageId) ??
+                      'Sent message';
             } else {
-              lastMsg = await encryptionService!.decryptMessage(env, checkReplay: false);
+              lastMsg = await encryptionService!
+                  .decryptMessage(env, checkReplay: false);
             }
           } catch (_) {
             lastMsg = 'Encrypted message';
@@ -330,6 +426,8 @@ class MessageService {
       body: jsonEncode({'content': newContent}),
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       return Message.fromJson(jsonDecode(response.body));
     } else {
@@ -342,6 +440,8 @@ class MessageService {
       Uri.parse('$baseUrl/api/messages/$messageId'),
       headers: _headers,
     );
+
+    AuthService.checkResponse(response.statusCode, jwtToken);
 
     if (response.statusCode == 200) {
       return Message.fromJson(jsonDecode(response.body));

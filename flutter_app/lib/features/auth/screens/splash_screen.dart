@@ -27,6 +27,13 @@ class _SplashScreenState extends State<SplashScreen> {
     if (widget.authService.isAuthenticated) {
       try {
         await widget.authService.me();
+      } on SessionExpiredException {
+        await widget.authService.logout();
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => LoginScreen(authService: widget.authService),
+        ));
+        return;
       } catch (e) {
         debugPrint('Could not reach backend on startup (offline mode): $e');
       }
@@ -38,9 +45,12 @@ class _SplashScreenState extends State<SplashScreen> {
         );
       }
     } else {
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => LoginScreen(authService: widget.authService),
+          builder: (_) => LoginScreen(
+            authService: widget.authService,
+          ),
         ),
       );
     }

@@ -1,9 +1,11 @@
+import '../../../core/network/auth_service.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/models/message.dart';
+import 'package:uuid/uuid.dart';
 import '../models/group_chat_model.dart';
 
 class GroupService {
@@ -23,24 +25,75 @@ class GroupService {
     String? description,
     required List<String> memberOfflineMeshIds,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/groups'),
-      headers: _headers,
-      body: jsonEncode({
-        'name': name,
-        'description': description,
-        'memberOfflineMeshIds': memberOfflineMeshIds,
-      }),
+    if (jwtToken.isNotEmpty) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$baseUrl/api/groups'),
+              headers: _headers,
+              body: jsonEncode({
+                'name': name,
+                'description': description,
+                'memberOfflineMeshIds': memberOfflineMeshIds,
+              }),
+            )
+            .timeout(const Duration(seconds: 5));
+
+        AuthService.checkResponse(response.statusCode, jwtToken);
+
+        if (response.statusCode == 201 || response.statusCode == 200) {
+          final json = jsonDecode(response.body);
+          final group = GroupChat.fromJson(json);
+          await _cacheGroup(group);
+          return group;
+        }
+      } catch (e) {
+        debugPrint(
+            'Remote group creation failed ($e). Creating offline local group.');
+      }
+    }
+
+    // Fallback: Create offline mesh group locally
+    final prefs = await SharedPreferences.getInstance();
+    final cachedRaw = prefs.getString('cached_user_profile');
+    String myMeshId = 'ME';
+    String myUsername = 'Me';
+    if (cachedRaw != null) {
+      try {
+        final data = jsonDecode(cachedRaw);
+        myMeshId = data['offlineMeshId']?.toString() ?? 'ME';
+        myUsername = data['username']?.toString() ?? 'Me';
+      } catch (_) {}
+    }
+
+    final localMembers = [
+      GroupMemberModel(
+        offlineMeshId: myMeshId,
+        username: myUsername,
+        role: 'ADMIN',
+        joinedAt: DateTime.now(),
+      ),
+      ...memberOfflineMeshIds.map(
+        (id) => GroupMemberModel(
+          offlineMeshId: id,
+          username: id,
+          role: 'MEMBER',
+          joinedAt: DateTime.now(),
+        ),
+      ),
+    ];
+
+    final localGroup = GroupChat(
+      id: const Uuid().v4(),
+      name: name,
+      description: description,
+      createdByOfflineMeshId: myMeshId,
+      createdAt: DateTime.now(),
+      members: localMembers,
     );
 
-    if (response.statusCode == 201 || response.statusCode == 200) {
-      final json = jsonDecode(response.body);
-      final group = GroupChat.fromJson(json);
-      await _cacheGroup(group);
-      return group;
-    } else {
-      throw Exception('Failed to create group: ${response.body}');
-    }
+    await _cacheGroup(localGroup);
+    return localGroup;
   }
 
   Future<List<GroupChat>> getUserGroups() async {
@@ -48,10 +101,14 @@ class GroupService {
 
     if (jwtToken.isNotEmpty) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl/api/groups'),
-          headers: _headers,
-        ).timeout(const Duration(seconds: 4));
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl/api/groups'),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 4));
+
+        AuthService.checkResponse(response.statusCode, jwtToken);
 
         if (response.statusCode == 200) {
           await prefs.setString('cached_user_groups', response.body);
@@ -59,7 +116,8 @@ class GroupService {
           return list.map((g) => GroupChat.fromJson(g)).toList();
         }
       } catch (e) {
-        debugPrint('Could not fetch remote groups ($e). Checking offline cache.');
+        debugPrint(
+            'Could not fetch remote groups ($e). Checking offline cache.');
       }
     }
 
@@ -88,6 +146,8 @@ class GroupService {
       headers: _headers,
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
       final group = GroupChat.fromJson(json);
@@ -98,11 +158,14 @@ class GroupService {
     }
   }
 
-  Future<GroupChat> addMember(String groupId, String memberOfflineMeshId) async {
+  Future<GroupChat> addMember(
+      String groupId, String memberOfflineMeshId) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/groups/$groupId/members/$memberOfflineMeshId'),
       headers: _headers,
     );
+
+    AuthService.checkResponse(response.statusCode, jwtToken);
 
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
@@ -114,11 +177,14 @@ class GroupService {
     }
   }
 
-  Future<GroupChat> removeMember(String groupId, String memberOfflineMeshId) async {
+  Future<GroupChat> removeMember(
+      String groupId, String memberOfflineMeshId) async {
     final response = await http.delete(
       Uri.parse('$baseUrl/api/groups/$groupId/members/$memberOfflineMeshId'),
       headers: _headers,
     );
+
+    AuthService.checkResponse(response.statusCode, jwtToken);
 
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
@@ -136,10 +202,14 @@ class GroupService {
 
     if (jwtToken.isNotEmpty) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl/api/groups/$groupId/messages'),
-          headers: _headers,
-        ).timeout(const Duration(seconds: 4));
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl/api/groups/$groupId/messages'),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 4));
+
+        AuthService.checkResponse(response.statusCode, jwtToken);
 
         if (response.statusCode == 200) {
           await prefs.setString(cacheKey, response.body);
@@ -147,7 +217,8 @@ class GroupService {
           return list.map((m) => Message.fromJson(m)).toList();
         }
       } catch (e) {
-        debugPrint('Could not fetch remote group messages ($e). Checking offline cache.');
+        debugPrint(
+            'Could not fetch remote group messages ($e). Checking offline cache.');
       }
     }
 
@@ -169,6 +240,8 @@ class GroupService {
       body: jsonEncode({'content': content}),
     );
 
+    AuthService.checkResponse(response.statusCode, jwtToken);
+
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body);
       return Message.fromJson(json);
@@ -189,6 +262,7 @@ class GroupService {
     }
     list.removeWhere((g) => g.id == group.id);
     list.insert(0, group);
-    await prefs.setString('cached_user_groups', jsonEncode(list.map((g) => g.toJson()).toList()));
+    await prefs.setString(
+        'cached_user_groups', jsonEncode(list.map((g) => g.toJson()).toList()));
   }
 }

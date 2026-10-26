@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/ui/mesh_widgets.dart';
 import 'package:flutter/material.dart';
 import '../../../core/network/auth_service.dart';
@@ -9,7 +11,10 @@ import 'register_screen.dart';
 class LoginScreen extends StatefulWidget {
   final AuthService authService;
 
-  const LoginScreen({super.key, required this.authService});
+  const LoginScreen({
+    super.key,
+    required this.authService,
+  });
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -21,17 +26,58 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
+
+  Future<void> _loadSavedCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('last_username');
+    final cachedRaw = prefs.getString('cached_user_profile');
+    String? cachedName;
+    if (cachedRaw != null) {
+      try {
+        final data = jsonDecode(cachedRaw);
+        cachedName = data['username'] as String?;
+      } catch (_) {}
+    }
+
+    if (mounted) {
+      setState(() {
+        if (saved != null && _usernameController.text.isEmpty) {
+          _usernameController.text = saved;
+        } else if (cachedName != null && _usernameController.text.isEmpty) {
+          _usernameController.text = cachedName;
+        }
+      });
+    }
+  }
+
   Future<void> _login() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
+    final user = _usernameController.text.trim();
+    final pass = _passwordController.text;
+    if (user.isEmpty || pass.isEmpty) {
+      setState(() {
+        _errorMessage = 'Please enter username and password.';
+      });
+      return;
+    }
+
     try {
       await widget.authService.login(
-        username: _usernameController.text.trim(),
-        password: _passwordController.text,
+        username: user,
+        password: pass,
       );
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_username', user);
 
       if (!mounted) return;
 

@@ -7,6 +7,31 @@ import '../config/app_config.dart';
 /// Handles authentication against the OfflineMesh backend.
 /// Stores the JWT token in SharedPreferences for session persistence.
 class AuthService {
+  static final _rejectedSessions = StreamController<String>.broadcast();
+  static Stream<String> get rejectedSessions => _rejectedSessions.stream;
+
+  static void checkResponse(int statusCode, String token) {
+    if (statusCode == 401) {
+      _rejectedSessions.add(token);
+      throw const SessionExpiredException();
+    }
+  }
+
+  // This only schedules reauthentication; signature verification stays on the server.
+  static bool tokenExpired(String token, {DateTime? now}) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+      final claims = jsonDecode(
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
+      final exp = claims['exp'];
+      return exp is! num ||
+          exp * 1000 <= (now ?? DateTime.now()).millisecondsSinceEpoch;
+    } catch (_) {
+      return true;
+    }
+  }
+
   String baseUrl;
 
   static String errorMessage(Object error) {
@@ -39,6 +64,7 @@ class AuthService {
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _jwtToken = prefs.getString('jwt_token');
+    if (_jwtToken != null && tokenExpired(_jwtToken!)) await logout();
   }
 
   /// Save token to secure storage/preferences
@@ -67,6 +93,8 @@ class AuthService {
         .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200 || response.statusCode == 201) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_username', username);
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
       throw Exception(
@@ -96,11 +124,38 @@ class AuthService {
             'Login succeeded but no token found in response: $body');
       }
       await _saveToken(token);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_username', username);
+
+      final meshId = body['offlineMeshId'] as String?;
+      if (meshId != null) {
+        final profile = {
+          'id': body['id']?.toString() ?? '',
+          'username': username,
+          'email': body['email']?.toString() ?? '',
+          'offlineMeshId': meshId,
+        };
+        await prefs.setString('cached_user_profile', jsonEncode(profile));
+      }
+
       return token;
     } else {
       throw Exception(
           'Login failed (${response.statusCode}): ${response.body}');
     }
+  }
+
+  /// Retrieve the last logged-in username persisted on device
+  static Future<String?> getLastUsername() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('last_username');
+  }
+
+  /// Check whether an offline user profile is cached on this device
+  static Future<bool> hasCachedProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('cached_user_profile') != null;
   }
 
   /// GET /api/auth/me — returns the current user profile.
@@ -117,6 +172,7 @@ class AuthService {
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
+      checkResponse(response.statusCode, _jwtToken!);
       throw Exception(
           'GET /api/auth/me failed (${response.statusCode}): ${response.body}');
     }
@@ -128,4 +184,11 @@ class AuthService {
     await prefs.remove('jwt_token');
     _jwtToken = null;
   }
+}
+
+class SessionExpiredException implements Exception {
+  const SessionExpiredException();
+  @override
+  String toString() =>
+      'Your session has expired or was rejected. Please sign in again.';
 }

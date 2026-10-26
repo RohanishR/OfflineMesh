@@ -1,7 +1,10 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/ui/mesh_widgets.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/network/auth_service.dart';
+import '../../auth/screens/login_screen.dart';
 import '../../../core/services/friend_service.dart';
 import '../../../core/services/message_service.dart';
 import '../../../core/services/user_service.dart';
@@ -24,8 +27,13 @@ import '../../../core/security/e2e_encryption_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthService authService;
+  final bool isOfflineMode;
 
-  const HomeScreen({super.key, required this.authService});
+  const HomeScreen({
+    super.key,
+    required this.authService,
+    this.isOfflineMode = false,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -33,6 +41,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  final Set<int> _visitedTabs = {0};
 
   late FriendService _friendService;
   late MessageService _messageService;
@@ -50,12 +59,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
   UserProfile? _currentUser;
   bool _isLoadingUser = true;
+  bool _cloudSessionExpired = false;
+  StreamSubscription<String>? _sessionSubscription;
+  Timer? _sessionTimer;
+  bool _reauthenticating = false;
+
+  Future<void> _navigateToLogin() async {
+    if (!mounted || _reauthenticating) return;
+    _reauthenticating = true;
+    await widget.authService.logout();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => LoginScreen(authService: widget.authService),
+        ),
+        (_) => false);
+  }
 
   @override
   void initState() {
     super.initState();
     final jwt = widget.authService.jwtToken ?? '';
     final baseUrl = widget.authService.baseUrl;
+    _sessionSubscription = AuthService.rejectedSessions.listen((token) {
+      if (token == widget.authService.jwtToken && mounted) {
+        setState(() {
+          _cloudSessionExpired = true;
+        });
+      }
+    });
+    _sessionTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      final token = widget.authService.jwtToken;
+      if (token != null && AuthService.tokenExpired(token) && mounted) {
+        setState(() {
+          _cloudSessionExpired = true;
+        });
+      }
+    });
 
     _friendService = FriendService(baseUrl: baseUrl, jwtToken: jwt);
     _messageService = MessageService(baseUrl: baseUrl, jwtToken: jwt);
@@ -69,9 +109,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadUser() async {
     try {
-      final user = await _userService.getMyProfile();
+      UserProfile user;
       final jwt = widget.authService.jwtToken ?? '';
       final baseUrl = widget.authService.baseUrl;
+
+      if (widget.isOfflineMode || jwt.isEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final cached = prefs.getString('cached_user_profile');
+        if (cached != null) {
+          user = UserProfile.fromJson(jsonDecode(cached));
+        } else {
+          user = await _userService.getMyProfile();
+        }
+      } else {
+        try {
+          user = await _userService.getMyProfile();
+        } catch (e) {
+          debugPrint('Remote profile load failed ($e). Falling back to cached profile.');
+          final prefs = await SharedPreferences.getInstance();
+          final cached = prefs.getString('cached_user_profile');
+          if (cached != null) {
+            user = UserProfile.fromJson(jsonDecode(cached));
+          } else {
+            rethrow;
+          }
+        }
+      }
 
       // Initialize E2EE Service
       final e2ee = E2eEncryptionService(
@@ -83,7 +146,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _e2eEncryptionService = e2ee;
       _messageService.encryptionService = e2ee;
       _fileService.encryptionService = e2ee;
-      _messageService.connectStomp();
+      if (jwt.isNotEmpty && !widget.isOfflineMode) {
+        try {
+          _messageService.connectStomp();
+        } catch (_) {}
+      }
 
       if (mounted) {
         setState(() {
@@ -112,7 +179,11 @@ class _HomeScreenState extends State<HomeScreen> {
             jwtToken: widget.authService.jwtToken ?? '',
             localOfflineMeshId: user.offlineMeshId,
           );
-          _webrtcSignalingService.connect();
+          if (jwt.isNotEmpty && !widget.isOfflineMode) {
+            try {
+              _webrtcSignalingService.connect();
+            } catch (_) {}
+          }
 
           _callService = CallService(
             signalingService: _webrtcSignalingService,
@@ -147,6 +218,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _sessionSubscription?.cancel();
+    _sessionTimer?.cancel();
     _discoveryService.stopDiscovery();
     if (_currentUser != null) {
       _wifiMessagingService.shutdown();
@@ -188,14 +261,69 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: List.generate(screens.length,
-            (i) => TickerMode(enabled: i == _currentIndex, child: screens[i])),
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (_cloudSessionExpired || widget.isOfflineMode)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                color: const Color(0xFF1E293B),
+                child: Row(
+                  children: [
+                    const Icon(Icons.wifi_tethering_rounded,
+                        size: 16, color: MeshColors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.isOfflineMode
+                            ? 'Offline Mesh mode active'
+                            : 'Server session expired. Offline Mesh active.',
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.white70),
+                      ),
+                    ),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: _navigateToLogin,
+                      child: const Text('Sign in',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: MeshColors.orange,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
+            Expanded(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: List.generate(screens.length,
+                    (i) => TickerMode(
+                      enabled: i == _currentIndex,
+                      child: _visitedTabs.contains(i)
+                          ? RepaintBoundary(child: screens[i])
+                          : const SizedBox.shrink(),
+                    )),
+              ),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: GlassNavigationBar(
         index: _currentIndex,
-        onChanged: (index) => setState(() => _currentIndex = index),
+        onChanged: (index) {
+          if (index == _currentIndex) return;
+          setState(() {
+            _visitedTabs.add(index);
+            _currentIndex = index;
+          });
+        },
       ),
     );
   }

@@ -21,6 +21,7 @@ class Message {
   final int? fileSize;
   final int? durationMs;
   final String? fileHash;
+  final String? attachmentId;
 
   Message({
     required this.id,
@@ -43,20 +44,23 @@ class Message {
     this.fileSize,
     this.durationMs,
     this.fileHash,
+    this.attachmentId,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) {
     TransportType? parsedTransport;
     if (json['transport'] != null) {
       try {
-        parsedTransport = TransportType.values.byName(json['transport'].toString());
+        parsedTransport =
+            TransportType.values.byName(json['transport'].toString());
       } catch (_) {}
     }
 
     final reactionsRaw = json['reactions'];
     Map<String, String>? parsedReactions;
     if (reactionsRaw is Map) {
-      parsedReactions = reactionsRaw.map((k, v) => MapEntry(k.toString(), v.toString()));
+      parsedReactions =
+          reactionsRaw.map((k, v) => MapEntry(k.toString(), v.toString()));
     }
 
     return Message(
@@ -81,9 +85,13 @@ class Message {
           : null,
       mediaPath: json['mediaPath']?.toString(),
       fileName: json['fileName']?.toString(),
-      fileSize: json['fileSize'] is num ? (json['fileSize'] as num).toInt() : null,
-      durationMs: json['durationMs'] is num ? (json['durationMs'] as num).toInt() : null,
+      fileSize:
+          json['fileSize'] is num ? (json['fileSize'] as num).toInt() : null,
+      durationMs: json['durationMs'] is num
+          ? (json['durationMs'] as num).toInt()
+          : null,
       fileHash: json['fileHash']?.toString(),
+      attachmentId: json['attachmentId']?.toString(),
     );
   }
 
@@ -91,7 +99,8 @@ class Message {
     return {
       'id': id,
       'senderOfflineMeshId': senderOfflineMeshId,
-      if (recipientOfflineMeshId != null) 'recipientOfflineMeshId': recipientOfflineMeshId,
+      if (recipientOfflineMeshId != null)
+        'recipientOfflineMeshId': recipientOfflineMeshId,
       'content': content,
       'createdAt': createdAt.toIso8601String(),
       'status': status,
@@ -109,6 +118,7 @@ class Message {
       if (fileSize != null) 'fileSize': fileSize,
       if (durationMs != null) 'durationMs': durationMs,
       if (fileHash != null) 'fileHash': fileHash,
+      if (attachmentId != null) 'attachmentId': attachmentId,
     };
   }
 
@@ -133,11 +143,13 @@ class Message {
     int? fileSize,
     int? durationMs,
     String? fileHash,
+    String? attachmentId,
   }) {
     return Message(
       id: id ?? this.id,
       senderOfflineMeshId: senderOfflineMeshId ?? this.senderOfflineMeshId,
-      recipientOfflineMeshId: recipientOfflineMeshId ?? this.recipientOfflineMeshId,
+      recipientOfflineMeshId:
+          recipientOfflineMeshId ?? this.recipientOfflineMeshId,
       content: content ?? this.content,
       createdAt: createdAt ?? this.createdAt,
       status: status ?? this.status,
@@ -155,6 +167,7 @@ class Message {
       fileSize: fileSize ?? this.fileSize,
       durationMs: durationMs ?? this.durationMs,
       fileHash: fileHash ?? this.fileHash,
+      attachmentId: attachmentId ?? this.attachmentId,
     );
   }
 }

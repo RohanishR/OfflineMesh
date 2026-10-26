@@ -5,11 +5,14 @@ services:
     container_name: offlinemesh-backend
     ports:
       - "8081:8080"
+    volumes:
+      - uploads:/app/uploads
     environment:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/${POSTGRES_DB:-offlinemesh}
       - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER:-postgres}
       - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - JWT_SECRET=${JWT_SECRET:-default_insecure_development_secret_key_needs_to_be_at_least_32_bytes}
+      - JWT_EXPIRATION=31536000000
     depends_on:
       db:
         condition: service_healthy
@@ -22,7 +25,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5433:5432"
+      - "5532:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -33,3 +36,5 @@ services:
 
 volumes:
   pgdata:
+  uploads:
+    name: offlinemesh_uploads

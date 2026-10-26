@@ -27,12 +27,16 @@ class VoiceMessageBubble extends StatefulWidget {
   final Message message;
   final bool isMe;
   final VoiceNoteService voiceNoteService;
+  final VoidCallback? onDownload;
+  final bool isDownloading;
 
   const VoiceMessageBubble({
     super.key,
     required this.message,
     required this.isMe,
     required this.voiceNoteService,
+    this.onDownload,
+    this.isDownloading = false,
   });
 
   @override
@@ -92,9 +96,13 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
   Future<void> _togglePlayPause() async {
     final path = widget.message.mediaPath;
     if (path == null || !File(path).existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Audio file not found on device.')),
-      );
+      if (widget.onDownload != null) {
+        widget.onDownload!();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Audio file not found on device.')),
+        );
+      }
       return;
     }
 
@@ -150,11 +158,37 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
                         : const Color(0xFF25D366).withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: widget.isMe ? Colors.white : const Color(0xFF25D366),
-                    size: 28,
-                  ),
+                  child: widget.isDownloading
+                      ? Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: widget.isMe
+                                  ? Colors.white
+                                  : const Color(0xFF25D366),
+                            ),
+                          ),
+                        )
+                      : (widget.message.mediaPath == null ||
+                              !File(widget.message.mediaPath!).existsSync())
+                          ? Icon(
+                              Icons.download_rounded,
+                              color: widget.isMe
+                                  ? Colors.white
+                                  : const Color(0xFF25D366),
+                              size: 26,
+                            )
+                          : Icon(
+                              _isPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: widget.isMe
+                                  ? Colors.white
+                                  : const Color(0xFF25D366),
+                              size: 28,
+                            ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -237,6 +271,100 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
               ),
             ],
           ),
+          if (widget.message.mediaPath != null &&
+              File(widget.message.mediaPath!).existsSync()) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final path = widget.message.mediaPath!;
+                    final opened = await FileViewerService.openFile(
+                      path,
+                      mimeType: FileViewerService.mimeFor(path),
+                    );
+                    if (!opened && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('No external audio player app found.')),
+                      );
+                    }
+                  },
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.open_in_new_rounded,
+                          size: 14,
+                          color: widget.isMe ? Colors.white70 : MeshColors.blue,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Open',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color:
+                                widget.isMe ? Colors.white70 : MeshColors.blue,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final path = widget.message.mediaPath!;
+                    final saved = await FileViewerService.saveToDownloads(
+                      path,
+                      fileName: widget.message.fileName ?? 'voice_note.m4a',
+                      mimeType: FileViewerService.mimeFor(path),
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(saved
+                              ? 'Saved to Downloads/OfflineMesh'
+                              : 'Failed to save audio to Downloads'),
+                        ),
+                      );
+                    }
+                  },
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.save_alt_rounded,
+                          size: 14,
+                          color: widget.isMe ? Colors.white70 : MeshColors.blue,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Save',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color:
+                                widget.isMe ? Colors.white70 : MeshColors.blue,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -247,11 +375,15 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
 class ImageMessageBubble extends StatelessWidget {
   final Message message;
   final bool isMe;
+  final VoidCallback? onDownload;
+  final bool isDownloading;
 
   const ImageMessageBubble({
     super.key,
     required this.message,
     required this.isMe,
+    this.onDownload,
+    this.isDownloading = false,
   });
 
   @override
@@ -276,6 +408,8 @@ class ImageMessageBubble extends StatelessWidget {
                     ),
                   ),
                 );
+              } else if (onDownload != null) {
+                onDownload!();
               }
             },
             child: hasLocalFile
@@ -285,6 +419,8 @@ class ImageMessageBubble extends StatelessWidget {
                       File(path),
                       width: 240,
                       height: 200,
+                      cacheWidth: (240 * MediaQuery.devicePixelRatioOf(context))
+                          .round(),
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) =>
                           _buildPlaceholder(context, 'Failed to load image'),
@@ -319,9 +455,22 @@ class ImageMessageBubble extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.image_outlined, size: 40, color: Colors.grey),
+            if (isDownloading)
+              const SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.download_rounded, size: 36),
+                color: isMe ? Colors.white : MeshColors.blue,
+                onPressed: onDownload,
+              ),
             const SizedBox(height: 8),
             Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 12, color: Colors.grey)),
             if (message.fileSize != null)
               Text(_formatFileSize(message.fileSize),
@@ -337,11 +486,15 @@ class ImageMessageBubble extends StatelessWidget {
 class VideoMessageBubble extends StatelessWidget {
   final Message message;
   final bool isMe;
+  final VoidCallback? onDownload;
+  final bool isDownloading;
 
   const VideoMessageBubble({
     super.key,
     required this.message,
     required this.isMe,
+    this.onDownload,
+    this.isDownloading = false,
   });
 
   @override
@@ -350,9 +503,22 @@ class VideoMessageBubble extends StatelessWidget {
     final hasLocalFile = path != null && File(path).existsSync();
 
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         if (hasLocalFile) {
-          FileViewerService.openFile(path, mimeType: 'video/*');
+          final opened = await FileViewerService.openFile(
+            path,
+            mimeType: FileViewerService.mimeFor(path),
+          );
+          if (!opened && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                    'Could not open video player app. You can save it to Downloads.'),
+              ),
+            );
+          }
+        } else if (onDownload != null) {
+          onDownload!();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -378,8 +544,66 @@ class VideoMessageBubble extends StatelessWidget {
                 color: Colors.black.withValues(alpha: 0.5),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.play_arrow_rounded,
-                  size: 36, color: Colors.white),
+              child: isDownloading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      ),
+                    )
+                  : Icon(
+                      hasLocalFile
+                          ? Icons.play_arrow_rounded
+                          : Icons.download_rounded,
+                      size: 36,
+                      color: Colors.white,
+                    ),
+            ),
+            // Top Right Save to Downloads / Download Button
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Material(
+                color: Colors.black54,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  iconSize: 18,
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
+                  icon: Icon(
+                    hasLocalFile
+                        ? Icons.save_alt_rounded
+                        : Icons.download_rounded,
+                    color: Colors.white,
+                  ),
+                  tooltip:
+                      hasLocalFile ? 'Save to Downloads' : 'Download video',
+                  onPressed: () async {
+                    if (hasLocalFile) {
+                      final saved = await FileViewerService.saveToDownloads(
+                        path,
+                        fileName: message.fileName ?? 'video.mp4',
+                        mimeType: FileViewerService.mimeFor(path),
+                      );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(saved
+                                ? 'Saved to Downloads/OfflineMesh'
+                                : 'Failed to save video to Downloads'),
+                          ),
+                        );
+                      }
+                    } else if (onDownload != null) {
+                      onDownload!();
+                    }
+                  },
+                ),
+              ),
             ),
             Positioned(
               bottom: 8,
@@ -419,11 +643,15 @@ class VideoMessageBubble extends StatelessWidget {
 class DocumentMessageBubble extends StatelessWidget {
   final Message message;
   final bool isMe;
+  final VoidCallback? onDownload;
+  final bool isDownloading;
 
   const DocumentMessageBubble({
     super.key,
     required this.message,
     required this.isMe,
+    this.onDownload,
+    this.isDownloading = false,
   });
 
   IconData _getFileIcon(String? name) {
@@ -458,6 +686,8 @@ class DocumentMessageBubble extends StatelessWidget {
       onTap: () {
         if (hasLocalFile) {
           FileViewerService.openFile(path);
+        } else if (onDownload != null) {
+          onDownload!();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('File not found on this device.')),
@@ -521,11 +751,22 @@ class DocumentMessageBubble extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            Icon(
-              hasLocalFile ? Icons.open_in_new_rounded : Icons.download_rounded,
-              size: 20,
-              color: isMe ? Colors.white70 : Colors.grey,
-            ),
+            isDownloading
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: isMe ? Colors.white70 : Colors.grey,
+                    ),
+                  )
+                : Icon(
+                    hasLocalFile
+                        ? Icons.open_in_new_rounded
+                        : Icons.download_rounded,
+                    size: 20,
+                    color: isMe ? Colors.white70 : Colors.grey,
+                  ),
           ],
         ),
       ),
